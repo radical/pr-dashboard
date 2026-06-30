@@ -60,6 +60,15 @@ static class NotificationPayloads
             Tag: $"ready-to-merge:{repository}#{number}",
             Icon: DefaultIcon));
 
+    public static string BuildBroken(string repository, string lane, string url) =>
+        Serialize(new NotificationPayload(
+            Title: $"Build broken \u00b7 {repository}",
+            Body: $"{lane} is red at tip.",
+            Url: url,
+            // Coalesce repeats for the same lane into one notification slot.
+            Tag: $"build-broken:{repository}:{lane}",
+            Icon: DefaultIcon));
+
     private static string ReadyToMergeBody(ReadyToMergeRole role, string title)
     {
         var prefix = role == ReadyToMergeRole.Author

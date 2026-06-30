@@ -45,6 +45,10 @@ sealed class NotificationPreferences
     // Default ON: nag the author and approver(s) when one of their PRs is ready to merge.
     public bool ReadyToMerge { get; set; } = true;
 
+    // Default OFF: a broken main build is a team-wide broadcast, so it stays opt-in to avoid
+    // alerting everyone by default the first time push is enabled.
+    public bool BuildBroken { get; set; }
+
     public static NotificationPreferences CreateDefault() => new();
 }
 
@@ -87,7 +91,9 @@ sealed record VapidPublicKeyResponse(string PublicKey, string KeyId);
 
 // ReadyToMerge defaults to true so an older PWA client that PUTs only { reviewRequested }
 // doesn't deserialize ReadyToMerge as false and silently disable the new default-on preference.
-sealed record NotificationPreferencesDto(bool ReviewRequested, bool ReadyToMerge = true);
+// BuildBroken defaults to false (its real default), so an older client omitting it keeps the
+// team-wide build-broken broadcast opt-in rather than enabling it implicitly.
+sealed record NotificationPreferencesDto(bool ReviewRequested, bool ReadyToMerge = true, bool BuildBroken = false);
 
 sealed record PushSubscriptionKeysDto(string? P256dh, string? Auth);
 

@@ -13,6 +13,7 @@ sealed class NotificationDetectorService(
     IServiceScopeFactory scopeFactory,
     INotificationStore store,
     IPushSender sender,
+    CiHealthSnapshotStore ciSnapshotStore,
     IOptions<GitHubCacheWarmupOptions> warmupOptions,
     IOptions<WebPushOptions> webPushOptions,
     TimeProvider timeProvider,
@@ -83,6 +84,7 @@ sealed class NotificationDetectorService(
         // profile), have at least one subscription, and have that specific trigger enabled.
         var reviewRequestedUserIds = new HashSet<long>();
         var readyToMergeUserIds = new HashSet<long>();
+        var buildBrokenUserIds = new HashSet<long>();
         var subscriptionsByUser = new Dictionary<long, IReadOnlyList<PushSubscriptionRecord>>();
         foreach (var profile in await store.ListUserProfilesAsync(cancellationToken))
         {
@@ -92,7 +94,7 @@ sealed class NotificationDetectorService(
             }
 
             var preferences = await store.GetPreferencesAsync(profile.Id, cancellationToken);
-            if (!preferences.ReviewRequested && !preferences.ReadyToMerge)
+            if (!preferences.ReviewRequested && !preferences.ReadyToMerge && !preferences.BuildBroken)
             {
                 continue;
             }
@@ -112,6 +114,11 @@ sealed class NotificationDetectorService(
             if (preferences.ReadyToMerge)
             {
                 readyToMergeUserIds.Add(profile.Id);
+            }
+
+            if (preferences.BuildBroken)
+            {
+                buildBrokenUserIds.Add(profile.Id);
             }
 
             stats.Subscribers++;
@@ -174,12 +181,48 @@ sealed class NotificationDetectorService(
             }
         }
 
+        // Team-wide CI: alert every opted-in user about each main lane red at tip. The shared
+        // pulse snapshot is read once; when it's available, every allowlist repo's CI state was
+        // observed this cycle, so build-broken state for recovered lanes can be pruned.
+        var ciObservedRepositories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (buildBrokenUserIds.Count > 0)
+        {
+            CiHealthPulseSnapshot? pulse = null;
+            try
+            {
+                pulse = await ciSnapshotStore.ReadPulseAsync(cancellationToken);
+            }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                logger.LogWarning(ex, "Notification detector could not read the CI health snapshot.");
+            }
+
+            if (pulse is not null)
+            {
+                foreach (var repository in repositories)
+                {
+                    ciObservedRepositories.Add(repository.ToString());
+                }
+
+                foreach (var candidate in CiBuildBrokenDetection.DetectFromSnapshot(pulse, buildBrokenUserIds))
+                {
+                    AddCandidate(candidatesByUser, new DetectedNotification(
+                        candidate.UserId,
+                        candidate.Repository,
+                        0,
+                        CiBuildBrokenDetection.EventKey(candidate.Repository, candidate.Lane),
+                        CiBuildBrokenDetection.RedFingerprint,
+                        NotificationPayloads.BuildBroken(candidate.Repository, candidate.Lane, CiBuildBrokenDetection.DeepLink())));
+                }
+            }
+        }
+
         // Dedupe + send per user. Users with no candidates are still processed so stale state
         // (PRs they were removed from) gets pruned.
         foreach (var (userId, subscriptions) in subscriptionsByUser)
         {
             candidatesByUser.TryGetValue(userId, out var candidates);
-            await ProcessUserAsync(userId, subscriptions, candidates ?? [], scannedRepositories, stats, cancellationToken);
+            await ProcessUserAsync(userId, subscriptions, candidates ?? [], scannedRepositories, ciObservedRepositories, stats, cancellationToken);
         }
 
         logger.LogInformation(
@@ -201,6 +244,16 @@ sealed class NotificationDetectorService(
         IReadOnlyList<PushSubscriptionRecord> subscriptions,
         IReadOnlyList<DetectedNotification> candidates,
         IReadOnlySet<string> scannedRepositories,
+        DetectorCycleStats stats,
+        CancellationToken cancellationToken) =>
+        await ProcessUserAsync(userId, subscriptions, candidates, scannedRepositories, null, stats, cancellationToken);
+
+    internal async Task ProcessUserAsync(
+        long userId,
+        IReadOnlyList<PushSubscriptionRecord> subscriptions,
+        IReadOnlyList<DetectedNotification> candidates,
+        IReadOnlySet<string> scannedRepositories,
+        IReadOnlySet<string>? ciObservedRepositories,
         DetectorCycleStats stats,
         CancellationToken cancellationToken)
     {
@@ -267,9 +320,11 @@ sealed class NotificationDetectorService(
                 }
             }
 
-            // Prune entries for repos we scanned this cycle where the trigger no longer applies
-            // (e.g. the user is no longer a requested reviewer, or the PR is no longer ready to
-            // merge), so a future re-entry notifies again.
+            // Prune entries for domains we observed this cycle where the trigger no longer
+            // applies (e.g. the user is no longer a requested reviewer, the PR is no longer ready
+            // to merge, or a main lane recovered), so a future re-entry notifies again. CI keys
+            // are gated on the CI snapshot being read this cycle; PR keys on the repo being
+            // scanned, so a partial failure of one source never spuriously prunes the other.
             foreach (var key in state.Events.Keys.ToList())
             {
                 if (currentKeys.Contains(key))
@@ -277,8 +332,11 @@ sealed class NotificationDetectorService(
                     continue;
                 }
 
-                if (TryGetEventRepository(key, out var repository)
-                    && scannedRepositories.Contains(repository))
+                var observed = CiBuildBrokenDetection.TryGetRepository(key, out var ciRepository)
+                    ? ciObservedRepositories is not null && ciObservedRepositories.Contains(ciRepository)
+                    : TryGetEventRepository(key, out var repository) && scannedRepositories.Contains(repository);
+
+                if (observed)
                 {
                     state.Events.Remove(key);
                     stats.StateEntriesCleared++;

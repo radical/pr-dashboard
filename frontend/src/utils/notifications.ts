@@ -9,6 +9,7 @@ export type VapidPublicKey = {
 export type NotificationPreferences = {
   reviewRequested: boolean;
   readyToMerge: boolean;
+  buildBroken: boolean;
 };
 
 export type TestNotificationResult = {

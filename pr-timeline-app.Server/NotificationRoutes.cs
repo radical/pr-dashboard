@@ -30,7 +30,7 @@ public static class NotificationRoutes
 
             await UpsertProfileAsync(store, user, cancellationToken);
             var preferences = await store.GetPreferencesAsync(user.Id, cancellationToken);
-            return Results.Ok(new NotificationPreferencesDto(preferences.ReviewRequested, preferences.ReadyToMerge));
+            return Results.Ok(new NotificationPreferencesDto(preferences.ReviewRequested, preferences.ReadyToMerge, preferences.BuildBroken));
         });
 
         api.MapPut("preferences", async (
@@ -59,10 +59,10 @@ public static class NotificationRoutes
             await UpsertProfileAsync(store, user, cancellationToken);
             await store.SavePreferencesAsync(
                 user.Id,
-                new NotificationPreferences { ReviewRequested = body.ReviewRequested, ReadyToMerge = body.ReadyToMerge },
+                new NotificationPreferences { ReviewRequested = body.ReviewRequested, ReadyToMerge = body.ReadyToMerge, BuildBroken = body.BuildBroken },
                 cancellationToken);
 
-            return Results.Ok(new NotificationPreferencesDto(body.ReviewRequested, body.ReadyToMerge));
+            return Results.Ok(new NotificationPreferencesDto(body.ReviewRequested, body.ReadyToMerge, body.BuildBroken));
         });
 
         api.MapPost("subscribe", async (

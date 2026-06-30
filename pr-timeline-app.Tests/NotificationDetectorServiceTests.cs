@@ -158,6 +158,7 @@ public sealed class NotificationDetectorServiceTests
             scopeFactory: null!,
             store,
             sender,
+            ciSnapshotStore: null!,
             Options.Create(new GitHubCacheWarmupOptions()),
             Options.Create(new WebPushOptions
             {
@@ -189,6 +190,72 @@ public sealed class NotificationDetectorServiceTests
             ReadyToMergeDetection.EventKey(repo, number),
             ReadyToMergeDetection.ReadyFingerprint,
             NotificationPayloads.ReadyToMerge(ReadyToMergeRole.Author, repo, number, $"PR {number}", ReadyToMergeDetection.DeepLink(repo, number)));
+
+    private static DetectedNotification BuildBrokenCandidate(long userId, string repo, string lane) =>
+        new(
+            userId,
+            repo,
+            0,
+            CiBuildBrokenDetection.EventKey(repo, lane),
+            CiBuildBrokenDetection.RedFingerprint,
+            NotificationPayloads.BuildBroken(repo, lane, CiBuildBrokenDetection.DeepLink()));
+
+    [Fact]
+    public async Task BuildBrokenNotifiesOnRedTransitionAndPrunesOnRecovery()
+    {
+        var store = new InMemoryNotificationStore();
+        var sender = new FakePushSender();
+        var service = CreateService(store, sender, new TestTimeProvider());
+
+        var subs = new[] { Subscription() };
+        await store.UpsertSubscriptionAsync(1, subs[0], TestContext.Current.CancellationToken);
+
+        var prScanned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var ciObserved = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "o/r" };
+
+        // First red → one alert.
+        await service.ProcessUserAsync(1, subs, [BuildBrokenCandidate(1, "o/r", "CI · main")], prScanned, ciObserved, new DetectorCycleStats(), TestContext.Current.CancellationToken);
+        Assert.Single(sender.Sent);
+
+        // Still red on the next cycle → no repeat.
+        await service.ProcessUserAsync(1, subs, [BuildBrokenCandidate(1, "o/r", "CI · main")], prScanned, ciObserved, new DetectorCycleStats(), TestContext.Current.CancellationToken);
+        Assert.Single(sender.Sent);
+
+        // Recovered (snapshot read, lane absent) → state pruned.
+        var pruneStats = new DetectorCycleStats();
+        await service.ProcessUserAsync(1, subs, [], prScanned, ciObserved, pruneStats, TestContext.Current.CancellationToken);
+        Assert.Equal(1, pruneStats.StateEntriesCleared);
+
+        // Breaks again → alerts again.
+        await service.ProcessUserAsync(1, subs, [BuildBrokenCandidate(1, "o/r", "CI · main")], prScanned, ciObserved, new DetectorCycleStats(), TestContext.Current.CancellationToken);
+        Assert.Equal(2, sender.Sent.Count);
+    }
+
+    [Fact]
+    public async Task BuildBrokenStateSurvivesWhenCiSnapshotMissing()
+    {
+        var store = new InMemoryNotificationStore();
+        var sender = new FakePushSender();
+        var service = CreateService(store, sender, new TestTimeProvider());
+
+        var subs = new[] { Subscription() };
+        await store.UpsertSubscriptionAsync(1, subs[0], TestContext.Current.CancellationToken);
+
+        var prScanned = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "o/r" };
+        await service.ProcessUserAsync(1, subs, [BuildBrokenCandidate(1, "o/r", "CI · main")], prScanned,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "o/r" }, new DetectorCycleStats(), TestContext.Current.CancellationToken);
+        Assert.Single(sender.Sent);
+
+        // A cycle where the CI snapshot wasn't read (ciObserved empty) must not prune the
+        // build-broken entry, even though the PR scan covered the same repo.
+        var pruneStats = new DetectorCycleStats();
+        await service.ProcessUserAsync(1, subs, [], prScanned,
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase), pruneStats, TestContext.Current.CancellationToken);
+        Assert.Equal(0, pruneStats.StateEntriesCleared);
+
+        var state = await store.GetStateAsync(1, TestContext.Current.CancellationToken);
+        Assert.True(state.State.Events.ContainsKey(CiBuildBrokenDetection.EventKey("o/r", "CI · main")));
+    }
 
     [Fact]
     public async Task NewReviewRequestSendsOnceAndDedupesOnRepeat()
@@ -402,4 +469,78 @@ public sealed class NotificationDetectorServiceTests
         Assert.Equal(1, stats.SubscriptionsPruned);
         Assert.Empty(await store.GetSubscriptionsAsync(1, TestContext.Current.CancellationToken));
     }
+}
+
+public sealed class CiBuildBrokenDetectionTests
+{
+    [Fact]
+    public void EventKeyNormalizesRepoAndKeepsLane()
+    {
+        Assert.Equal("ci_build_broken:microsoft/aspire#CI · release/13.4",
+            CiBuildBrokenDetection.EventKey("Microsoft/Aspire", "CI · release/13.4"));
+    }
+
+    [Fact]
+    public void TryGetRepositoryRecoversSlugAcrossLaneSeparators()
+    {
+        // The lane itself contains '/', so parsing must stop at the first '#'.
+        Assert.True(CiBuildBrokenDetection.TryGetRepository("ci_build_broken:microsoft/aspire#CI · release/13.4", out var repo));
+        Assert.Equal("microsoft/aspire", repo);
+        Assert.False(CiBuildBrokenDetection.TryGetRepository("review_requested:o/r#5", out _));
+        Assert.False(CiBuildBrokenDetection.TryGetRepository("ci_build_broken:no-hash", out _));
+    }
+
+    [Fact]
+    public void IsMainBuildAcceptsMainSectionOnly()
+    {
+        Assert.True(CiBuildBrokenDetection.IsMainBuild(Failing("CI · main", WorkflowLane.MainSection)));
+        Assert.False(CiBuildBrokenDetection.IsMainBuild(Failing("Deployment E2E Tests", WorkflowLane.ScheduledSection)));
+    }
+
+    [Fact]
+    public void DetectBroadcastsEveryMainLaneToEveryEnabledUser()
+    {
+        var snapshot = new CiHealthPulseSnapshot(
+            Workflows: [],
+            FailingNow:
+            [
+                Failing("CI · main", WorkflowLane.MainSection, "o/r"),
+                Failing("CI · release/13.4", WorkflowLane.MainSection, "o/r"),
+                Failing("Deployment E2E Tests", WorkflowLane.ScheduledSection, "o/r"),
+            ],
+            BotPrs: [],
+            BotIssues: [],
+            UpdatedAt: DateTimeOffset.UnixEpoch);
+
+        var detected = CiBuildBrokenDetection
+            .DetectFromSnapshot(snapshot, new HashSet<long> { 1, 2 })
+            .ToList();
+
+        // 2 main lanes × 2 users; the scheduled lane is excluded.
+        Assert.Equal(4, detected.Count);
+        Assert.All(detected, candidate => Assert.NotEqual("Deployment E2E Tests", candidate.Lane));
+        Assert.Contains(detected, candidate => candidate.UserId == 1 && candidate.Lane == "CI · main");
+        Assert.Contains(detected, candidate => candidate.UserId == 2 && candidate.Lane == "CI · release/13.4");
+    }
+
+    [Fact]
+    public void DetectYieldsNothingWithoutSnapshotOrUsers()
+    {
+        Assert.Empty(CiBuildBrokenDetection.DetectFromSnapshot(null, new HashSet<long> { 1 }));
+        var snapshot = new CiHealthPulseSnapshot([], [Failing("CI · main", WorkflowLane.MainSection)], [], [], DateTimeOffset.UnixEpoch);
+        Assert.Empty(CiBuildBrokenDetection.DetectFromSnapshot(snapshot, new HashSet<long>()));
+    }
+
+    private static FailingWorkflow Failing(string lane, string section, string repository = "o/r") =>
+        new(
+            repository,
+            Workflow: lane,
+            Lane: lane,
+            Section: section,
+            FailingSince: DateTimeOffset.UnixEpoch,
+            Streak: 1,
+            LastRunId: 1,
+            LastRunUrl: "https://example/run",
+            LikelyReal: false,
+            LinkedIssue: null);
 }

@@ -109,6 +109,12 @@ const NOTIFICATION_TYPES: NotificationType[] = [
     icon: <MergeIcon />,
   },
   {
+    id: 'buildBroken',
+    title: 'Main build broken',
+    description: 'When a main or release-branch build goes red at tip. Sent to everyone who turns this on.',
+    icon: <CheckXIcon />,
+  },
+  {
     id: 'mentioned',
     title: 'Mentioned',
     description: 'When someone @mentions you in a PR or review.',
@@ -207,6 +213,7 @@ function NotificationSettings({ authStatus, variant = 'bell' }: NotificationSett
   const [subscribed, setSubscribed] = useState(false);
   const [reviewRequested, setReviewRequested] = useState(true);
   const [readyToMerge, setReadyToMerge] = useState(true);
+  const [buildBroken, setBuildBroken] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<Status>(idleStatus);
 
@@ -263,6 +270,7 @@ function NotificationSettings({ authStatus, variant = 'bell' }: NotificationSett
             if (!cancelled) {
               setReviewRequested(prefs.reviewRequested);
               setReadyToMerge(prefs.readyToMerge);
+              setBuildBroken(prefs.buildBroken);
             }
           } catch {
             // Non-fatal: leave the default toggle state.
@@ -354,6 +362,7 @@ function NotificationSettings({ authStatus, variant = 'bell' }: NotificationSett
         const prefs = await getPreferences();
         setReviewRequested(prefs.reviewRequested);
         setReadyToMerge(prefs.readyToMerge);
+        setBuildBroken(prefs.buildBroken);
       } catch {
         // Ignore; defaults apply.
       }
@@ -387,6 +396,7 @@ function NotificationSettings({ authStatus, variant = 'bell' }: NotificationSett
         const saved = await savePreferences(next);
         setReviewRequested(saved.reviewRequested);
         setReadyToMerge(saved.readyToMerge);
+        setBuildBroken(saved.buildBroken);
       } catch (error) {
         rollback();
         setStatus({ kind: 'error', text: error instanceof Error ? error.message : 'Could not save preference.' });
@@ -400,14 +410,20 @@ function NotificationSettings({ authStatus, variant = 'bell' }: NotificationSett
   const toggleReviewRequested = useCallback(() => {
     const next = !reviewRequested;
     setReviewRequested(next);
-    void persistPreferences({ reviewRequested: next, readyToMerge }, () => setReviewRequested(!next));
-  }, [reviewRequested, readyToMerge, persistPreferences]);
+    void persistPreferences({ reviewRequested: next, readyToMerge, buildBroken }, () => setReviewRequested(!next));
+  }, [reviewRequested, readyToMerge, buildBroken, persistPreferences]);
 
   const toggleReadyToMerge = useCallback(() => {
     const next = !readyToMerge;
     setReadyToMerge(next);
-    void persistPreferences({ reviewRequested, readyToMerge: next }, () => setReadyToMerge(!next));
-  }, [reviewRequested, readyToMerge, persistPreferences]);
+    void persistPreferences({ reviewRequested, readyToMerge: next, buildBroken }, () => setReadyToMerge(!next));
+  }, [reviewRequested, readyToMerge, buildBroken, persistPreferences]);
+
+  const toggleBuildBroken = useCallback(() => {
+    const next = !buildBroken;
+    setBuildBroken(next);
+    void persistPreferences({ reviewRequested, readyToMerge, buildBroken: next }, () => setBuildBroken(!next));
+  }, [reviewRequested, readyToMerge, buildBroken, persistPreferences]);
 
   const test = useCallback(async () => {
     setBusy(true);
@@ -439,6 +455,7 @@ function NotificationSettings({ authStatus, variant = 'bell' }: NotificationSett
   const liveControls: Record<string, { checked: boolean; toggle: () => void }> = {
     reviewRequested: { checked: reviewRequested, toggle: toggleReviewRequested },
     readyToMerge: { checked: readyToMerge, toggle: toggleReadyToMerge },
+    buildBroken: { checked: buildBroken, toggle: toggleBuildBroken },
   };
 
   let body: ReactNode;
