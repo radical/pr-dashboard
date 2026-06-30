@@ -18,6 +18,32 @@ function relativeTime(iso: string): string {
   return `${Math.round(hours / 24)}d ago`;
 }
 
+// Drops the owner prefix ("microsoft/aspire" -> "aspire") for readability, but only when the bare repo
+// name is unique among the repos on screen — so e.g. microsoft/aspire vs CommunityToolkit/Aspire keep
+// their owners and don't collide.
+function buildRepoLabeler(repos: Iterable<string>): (repo: string) => string {
+  const ownersByName = new Map<string, Set<string>>();
+  for (const repo of repos) {
+    const slash = repo.indexOf('/');
+    if (slash < 0) continue;
+    const name = repo.slice(slash + 1).toLowerCase();
+    const owner = repo.slice(0, slash);
+    let owners = ownersByName.get(name);
+    if (!owners) {
+      owners = new Set();
+      ownersByName.set(name, owners);
+    }
+    owners.add(owner);
+  }
+
+  return (repo: string) => {
+    const slash = repo.indexOf('/');
+    if (slash < 0) return repo;
+    const name = repo.slice(slash + 1);
+    return (ownersByName.get(name.toLowerCase())?.size ?? 0) > 1 ? repo : name;
+  };
+}
+
 // Newest-first sequence rendered oldest -> newest (left to right), each block linking to its run.
 function RecentRuns({ lane }: { lane: WorkflowPulse }) {
   return (
@@ -36,7 +62,7 @@ function RecentRuns({ lane }: { lane: WorkflowPulse }) {
   );
 }
 
-function PulseTable({ lanes, weeklyByLane }: { lanes: WorkflowPulse[]; weeklyByLane: Map<string, WorkflowWeekly> }) {
+function PulseTable({ lanes, weeklyByLane, repoLabel }: { lanes: WorkflowPulse[]; weeklyByLane: Map<string, WorkflowWeekly>; repoLabel: (repo: string) => string }) {
   if (lanes.length === 0) {
     return <p className="ci-empty">No lanes.</p>;
   }
@@ -51,7 +77,7 @@ function PulseTable({ lanes, weeklyByLane }: { lanes: WorkflowPulse[]; weeklyByL
           return (
             <tr key={`${w.repository}/${w.lane}`}>
               <td title={w.greenAtTip ? 'green at tip' : 'red at tip'}>{w.greenAtTip ? '🟢' : '🔴'}</td>
-              <td>{w.repository} · {w.lane}</td>
+              <td>{repoLabel(w.repository)} · {w.lane}</td>
               <td>{percent(w.passRate)} <span className="ci-muted">({w.passes}/{w.runs})</span></td>
               <td>{d === null ? '—' : delta(d)}</td>
               <td><RecentRuns lane={w} /></td>
@@ -63,7 +89,7 @@ function PulseTable({ lanes, weeklyByLane }: { lanes: WorkflowPulse[]; weeklyByL
   );
 }
 
-function WeeklyTable({ lanes }: { lanes: WorkflowWeekly[] }) {
+function WeeklyTable({ lanes, repoLabel }: { lanes: WorkflowWeekly[]; repoLabel: (repo: string) => string }) {
   if (lanes.length === 0) {
     return <p className="ci-empty">No lanes.</p>;
   }
@@ -74,7 +100,7 @@ function WeeklyTable({ lanes }: { lanes: WorkflowWeekly[] }) {
       <tbody>
         {lanes.map((w) => (
           <tr key={`${w.repository}/${w.lane}`}>
-            <td>{w.repository} · {w.lane}</td>
+            <td>{repoLabel(w.repository)} · {w.lane}</td>
             <td>{percent(w.passRate)}</td>
             <td>{delta(w.delta)}</td>
           </tr>
@@ -112,6 +138,12 @@ function CiHealthView() {
   const { pulse, weekly } = data;
   const redAtTip = (pulse?.workflows ?? []).filter((w) => !w.greenAtTip).length;
   const weeklyByLane = new Map((weekly?.workflows ?? []).map((w) => [`${w.repository}\n${w.lane}`, w]));
+  const repoLabel = buildRepoLabeler([
+    ...(pulse?.workflows ?? []).map((w) => w.repository),
+    ...(weekly?.workflows ?? []).map((w) => w.repository),
+    ...(pulse?.botPrs ?? []).map((b) => b.repository),
+    ...(pulse?.botIssues ?? []).map((b) => b.repository),
+  ]);
 
   const pulseMain = (pulse?.workflows ?? []).filter((w) => w.section === 'main');
   const allScheduled = (pulse?.workflows ?? []).filter((w) => w.section === 'scheduled');
@@ -140,7 +172,7 @@ function CiHealthView() {
 
       <section className="ci-block">
         <h3>🌳 Main CI — 36h pass rate</h3>
-        <PulseTable lanes={pulseMain} weeklyByLane={weeklyByLane} />
+        <PulseTable lanes={pulseMain} weeklyByLane={weeklyByLane} repoLabel={repoLabel} />
       </section>
 
       <section className="ci-block">
@@ -152,17 +184,17 @@ function CiHealthView() {
             </button>
           ) : null}
         </h3>
-        <PulseTable lanes={scheduledShown} weeklyByLane={weeklyByLane} />
+        <PulseTable lanes={scheduledShown} weeklyByLane={weeklyByLane} repoLabel={repoLabel} />
       </section>
 
       <section className="ci-block">
         <h3>🩺 Main CI — 7d trend</h3>
-        <WeeklyTable lanes={weeklyMain} />
+        <WeeklyTable lanes={weeklyMain} repoLabel={repoLabel} />
       </section>
 
       <section className="ci-block">
         <h3>🩺 Scheduled — 7d trend</h3>
-        <WeeklyTable lanes={weeklyScheduled} />
+        <WeeklyTable lanes={weeklyScheduled} repoLabel={repoLabel} />
       </section>
 
       <section className="ci-block">
@@ -177,7 +209,7 @@ function CiHealthView() {
                 <tr key={`${pr.repository}#${pr.number}`}>
                   <td><a href={pr.htmlUrl} target="_blank" rel="noreferrer">#{pr.number} ↗</a></td>
                   <td><a href={pr.htmlUrl} target="_blank" rel="noreferrer">{pr.title}</a></td>
-                  <td>{pr.repository}</td>
+                  <td>{repoLabel(pr.repository)}</td>
                   <td>{pr.author}</td>
                   <td>{pr.ciStatus}</td>
                   <td>{pr.mergeable}</td>
@@ -201,7 +233,7 @@ function CiHealthView() {
                 <tr key={`${issue.repository}#${issue.number}`}>
                   <td><a href={issue.htmlUrl} target="_blank" rel="noreferrer">#{issue.number} ↗</a></td>
                   <td><a href={issue.htmlUrl} target="_blank" rel="noreferrer">{issue.title}</a></td>
-                  <td>{issue.repository}</td>
+                  <td>{repoLabel(issue.repository)}</td>
                   <td>{issue.author}</td>
                 </tr>
               ))}
