@@ -690,6 +690,8 @@ record TimelineItem(
 [JsonSerializable(typeof(GitHubTimelineItemDto[]))]
 [JsonSerializable(typeof(GitHubWorkflowRunsResponseDto))]
 [JsonSerializable(typeof(GitHubWorkflowRunDto))]
+[JsonSerializable(typeof(GitHubWorkflowDefinitionsResponseDto))]
+[JsonSerializable(typeof(GitHubWorkflowDefinitionDto))]
 partial class GitHubJsonSerializerContext : JsonSerializerContext;
 
 sealed class GitHubActorDto
@@ -1343,4 +1345,22 @@ sealed class GitHubWorkflowRunDto
 
     [System.Text.Json.Serialization.JsonPropertyName("event")]
     public string? Event { get; init; }
+}
+
+sealed class GitHubWorkflowDefinitionsResponseDto
+{
+    [System.Text.Json.Serialization.JsonPropertyName("workflows")]
+    public GitHubWorkflowDefinitionDto[] Workflows { get; init; } = [];
+}
+
+sealed class GitHubWorkflowDefinitionDto
+{
+    [System.Text.Json.Serialization.JsonPropertyName("id")]
+    public long Id { get; init; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("name")]
+    public string? Name { get; init; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("state")]
+    public string? State { get; init; }
 }

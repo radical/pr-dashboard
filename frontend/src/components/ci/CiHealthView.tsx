@@ -90,7 +90,7 @@ function CiHealthView() {
                 <td>{w.repository} · {w.workflow}</td>
                 <td>{w.runs}</td>
                 <td>{percent(w.passRate)}</td>
-                <td>{w.sequence.map((pass) => (pass ? '🟩' : '🟥')).join('')}</td>
+                <td>{[...w.sequence].slice(0, 30).reverse().map((pass) => (pass ? '🟩' : '🟥')).join('')}</td>
               </tr>
             ))}
           </tbody>

@@ -519,24 +519,71 @@ sealed partial class GitHubClient(
             cancellationToken);
     }
 
-    // Fetches recent GitHub Actions runs for a repo, newest-first, stopping once runs predate `since`
-    // or a page cap is hit. Uses the public-cache (server) token so it works for logged-out viewers.
-    // The server-side `created>=since` filter keeps the page budget spent on in-window runs only, so
-    // busy repos don't exhaust it on older runs before the window is covered.
+    // Lists a repo's workflow definitions (id + display name). Used by the weekly cycle to fetch runs
+    // per workflow, which avoids the repo-wide /actions/runs ~1000-result ceiling truncating the
+    // 14-day window on busy repos.
+    public async Task<IReadOnlyList<WorkflowDefinition>> GetWorkflowDefinitionsAsync(
+        RepositoryName repositoryName,
+        CancellationToken cancellationToken)
+    {
+        const int maxPages = 5;
+        const int perPage = 100;
+        var definitions = new List<WorkflowDefinition>();
+
+        for (var page = 1; page <= maxPages; page++)
+        {
+            var url = $"repos/{repositoryName.Owner}/{repositoryName.Name}/actions/workflows?per_page={perPage}&page={page}";
+            using var response = await SendGitHubRequestAsync(url, GitHubRequestAuthorization.PublicCacheToken, cancellationToken);
+            var payload = await ReadGitHubJsonAsync(
+                response,
+                GitHubJsonSerializerContext.Default.GitHubWorkflowDefinitionsResponseDto,
+                cancellationToken);
+
+            if (payload.Workflows.Length == 0)
+            {
+                break;
+            }
+
+            foreach (var dto in payload.Workflows)
+            {
+                // Skip disabled workflows; only "active" ones produce meaningful health signal.
+                if (dto.State is null or "active")
+                {
+                    definitions.Add(new WorkflowDefinition(dto.Id, dto.Name ?? "(unnamed)"));
+                }
+            }
+
+            if (payload.Workflows.Length < perPage)
+            {
+                break;
+            }
+        }
+
+        return definitions;
+    }
+
+    // Fetches recent GitHub Actions runs for a repo (or a single workflow when workflowId is set),
+    // newest-first, stopping once runs predate `since` or a page cap is hit. Uses the public-cache
+    // (server) token so it works for logged-out viewers. The server-side `created>=since` filter keeps
+    // the page budget spent on in-window runs only, so busy repos don't exhaust it on older runs.
     public async Task<IReadOnlyList<WorkflowRun>> GetWorkflowRunsAsync(
         RepositoryName repositoryName,
         DateTimeOffset since,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        long? workflowId = null)
     {
         const int maxPages = 10;
         const int perPage = 100;
         var runs = new List<WorkflowRun>();
         // GitHub's `created` filter takes a date-range expression; ">=<iso>" bounds it to the window.
         var createdFilter = Uri.EscapeDataString($">={since.UtcDateTime:yyyy-MM-ddTHH:mm:ssZ}");
+        var runsPath = workflowId is long id
+            ? $"repos/{repositoryName.Owner}/{repositoryName.Name}/actions/workflows/{id}/runs"
+            : $"repos/{repositoryName.Owner}/{repositoryName.Name}/actions/runs";
 
         for (var page = 1; page <= maxPages; page++)
         {
-            var url = $"repos/{repositoryName.Owner}/{repositoryName.Name}/actions/runs?per_page={perPage}&page={page}&created={createdFilter}";
+            var url = $"{runsPath}?per_page={perPage}&page={page}&created={createdFilter}";
             using var response = await SendGitHubRequestAsync(url, GitHubRequestAuthorization.PublicCacheToken, cancellationToken);
             var payload = await ReadGitHubJsonAsync(
                 response,

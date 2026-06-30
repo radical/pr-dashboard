@@ -123,8 +123,18 @@ sealed class CiHealthProducer(
 
             try
             {
-                var runs = FilterWorkflows(repository, await gitHub.GetWorkflowRunsAsync(repository, since, cancellationToken));
-                weekly.AddRange(CiHealthComputer.ComputeWeekly(runs, now, config.WeeklyWindowDays));
+                // Fetch runs per workflow so the 14-day window isn't truncated by the repo-wide
+                // /actions/runs ~1000-result ceiling on busy repos (which would zero out the prior
+                // week and fabricate the trend delta).
+                var definitions = FilterDefinitions(repository, await gitHub.GetWorkflowDefinitionsAsync(repository, cancellationToken));
+                var runs = new List<WorkflowRun>();
+                foreach (var definition in definitions)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    runs.AddRange(await gitHub.GetWorkflowRunsAsync(repository, since, cancellationToken, definition.Id));
+                }
+
+                weekly.AddRange(CiHealthComputer.ComputeWeekly(FilterWorkflows(repository, runs), now, config.WeeklyWindowDays));
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -134,6 +144,19 @@ sealed class CiHealthProducer(
 
         await store.WriteWeeklyAsync(new CiHealthWeeklySnapshot(weekly, now), cancellationToken);
         logger.LogInformation("CI health weekly written: {Workflows} workflows.", weekly.Count);
+    }
+
+    // When a per-repo workflow allowlist is configured, restrict the definitions we fetch runs for to
+    // that set (by name); otherwise fetch all of them and let FilterWorkflows apply the event filter.
+    private IReadOnlyList<WorkflowDefinition> FilterDefinitions(RepositoryName repository, IReadOnlyList<WorkflowDefinition> definitions)
+    {
+        if (!options.Value.Workflows.TryGetValue(repository.ToString(), out var allowed) || allowed.Length == 0)
+        {
+            return definitions;
+        }
+
+        var set = new HashSet<string>(allowed, StringComparer.OrdinalIgnoreCase);
+        return definitions.Where(definition => set.Contains(definition.Name)).ToList();
     }
 
     private IEnumerable<RepositoryName> ResolveRepositories()

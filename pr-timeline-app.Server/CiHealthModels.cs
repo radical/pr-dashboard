@@ -12,6 +12,9 @@ record WorkflowRun(
     string HeadBranch,
     string Event);        // push | pull_request | schedule | ...
 
+// A workflow definition (id + display name) from the repo's /actions/workflows list.
+record WorkflowDefinition(long Id, string Name);
+
 // 36h pulse for one workflow: pass rate + the most-recent run-by-run sequence (true = pass).
 record WorkflowPulse(
     string Repository,
