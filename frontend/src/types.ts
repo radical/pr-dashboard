@@ -383,6 +383,7 @@ export type FailingWorkflow = {
   lastRunUrl: string;
   likelyReal: boolean;
   linkedIssue: string | null;
+  cadenceMinutes: number;
 };
 
 export type WorkflowWeekly = {
@@ -438,13 +439,20 @@ export type CiHealthWeeklySnapshot = {
 export type CiTriageItem = {
   repository: string;
   workflow: string;
+  lane: string;
   runId: number;
   runUrl: string;
+  failingSince: string;
+  streak: number;
   needsAction: boolean;
   category: string;
   confidence: string;
   summary: string;
   suggestedAction: string;
+  sameRootCauseAsPrevious: boolean;
+  recurringBuilds: number;
+  triagedAt: string;
+  model: string;
 };
 
 export type CiTriageSnapshot = {

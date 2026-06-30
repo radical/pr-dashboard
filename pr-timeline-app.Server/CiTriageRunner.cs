@@ -32,9 +32,12 @@ sealed class CiTriageRunner(
 
         var config = options.Value.Triage;
         var prior = await store.ReadTriageAsync(cancellationToken);
-        var priorByRun = (prior?.Items ?? [])
+        // Only reuse verdicts that carry the current schema (non-empty Lane). This invalidates any
+        // verdict written before a shape change so the gate re-triages it rather than serving a stale row.
+        var currentVerdicts = (prior?.Items ?? []).Where(item => !string.IsNullOrEmpty(item.Lane)).ToList();
+        var priorByRun = currentVerdicts
             .ToDictionary(item => (item.Repository, item.Workflow, item.RunId));
-        var priorByLane = (prior?.Items ?? [])
+        var priorByLane = currentVerdicts
             .GroupBy(item => LaneKey(item.Repository, item.Lane))
             .ToDictionary(group => group.Key, group => group.OrderByDescending(i => i.TriagedAt).First());
 

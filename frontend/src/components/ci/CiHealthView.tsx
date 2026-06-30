@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import type { CiTriageSnapshot, WorkflowPulse, WorkflowWeekly } from '../../types';
+import type { CiTriageItem, CiTriageSnapshot, FailingWorkflow, WorkflowPulse, WorkflowWeekly } from '../../types';
+import { formatAge } from '../../utils/format';
 import { buildRepoLabeler, delta, percent, relativeTime } from './ciFormat';
 import { useCiHealth } from './useCiHealth';
 import CiRefreshButton from './CiRefreshButton';
@@ -70,61 +71,92 @@ function WeeklyTable({ lanes, repoLabel }: { lanes: WorkflowWeekly[]; repoLabel:
   );
 }
 
-// Copilot-produced triage of the currently-failing lanes. "Run triage" shells out to the Copilot CLI on
-// the server (a few minutes) and swaps in the result; each item links to its failing run.
-function TriageBlock({
+function cadenceLabel(minutes: number): string {
+  if (!minutes) {
+    return '';
+  }
+  return minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`;
+}
+
+// Verdict cell for one failing lane: the model's actionable/not call + reason, recurrence, and suggested
+// action. "Analysing…" until a verdict for this exact run exists (auto-triage fills it in on cadence).
+function VerdictCell({ verdict }: { verdict: CiTriageItem | undefined }) {
+  if (!verdict) {
+    return <span className="ci-muted">⏳ analysing…</span>;
+  }
+  const recurring = verdict.recurringBuilds > 1;
+  return (
+    <div>
+      <div>
+        <span className={`bots-reason ${verdict.needsAction ? 'danger' : 'success'}`}>
+          {verdict.needsAction ? '⚠️ action' : '✅ no action'}
+        </span>{' '}
+        <span className="ci-muted">{verdict.category} · {verdict.confidence}</span>
+      </div>
+      <div>{verdict.summary}</div>
+      {recurring ? (
+        <div className="ci-muted" title="consecutive builds failing the same way">
+          ↻ same failure ×{verdict.recurringBuilds}
+        </div>
+      ) : null}
+      {verdict.needsAction && verdict.suggestedAction && verdict.suggestedAction.toLowerCase() !== 'none' ? (
+        <div className="ci-muted">→ {verdict.suggestedAction}</div>
+      ) : null}
+    </div>
+  );
+}
+
+// "Failing now" — every lane whose latest run failed (red at tip), each with its triage verdict inline.
+// The list is always complete; verdicts fill in from auto-triage (or the manual "Run triage").
+function FailingNowBlock({
+  failing,
   triage,
   triaging,
   triageError,
   onRun,
   repoLabel,
 }: {
+  failing: FailingWorkflow[];
   triage: CiTriageSnapshot | null;
   triaging: boolean;
   triageError: string | null;
   onRun: () => void;
   repoLabel: (repo: string) => string;
 }) {
+  const verdictByRun = new Map((triage?.items ?? []).map((it) => [it.runId, it]));
+
   return (
     <section className="ci-block">
       <h3>
-        🔎 CI failure triage (Copilot)
+        🚨 Failing now <span className="ci-muted">({failing.length})</span>
         <button type="button" className="ci-refresh" onClick={onRun} disabled={triaging}>
-          {triaging ? 'Running triage…' : '🤖 Run triage'}
+          {triaging ? 'Triaging…' : '🤖 Run triage'}
         </button>
       </h3>
       {triageError ? <p className="ci-refresh-error">{triageError}</p> : null}
-      {triaging ? (
-        <p className="ci-muted">Asking Copilot to investigate the failing lanes — this can take a few minutes…</p>
-      ) : null}
-      {!triage ? (
-        <p className="ci-empty">No triage yet. Click “Run triage” to ask Copilot to investigate the currently-failing lanes.</p>
-      ) : triage.error ? (
-        <p className="ci-empty">Triage error: {triage.error}</p>
-      ) : triage.items.length === 0 ? (
-        <p className="ci-empty">No failing lanes to triage. 🎉</p>
+      {triage?.error ? <p className="ci-muted">Triage error: {triage.error}</p> : null}
+      {failing.length === 0 ? (
+        <p className="ci-empty">No lanes are red at tip. 🎉</p>
       ) : (
         <>
           <table className="ci-table">
-            <thead><tr><th>Action</th><th>Repo / workflow</th><th>Category</th><th>Confidence</th><th>Assessment</th></tr></thead>
+            <thead><tr><th>Repo / lane</th><th>Failing</th><th>Assessment</th></tr></thead>
             <tbody>
-              {triage.items.map((it) => (
-                <tr key={`${it.repository}#${it.runId}`}>
-                  <td title={it.needsAction ? 'needs action' : 'no action needed'}>{it.needsAction ? '⚠️' : '✅'}</td>
-                  <td><a href={it.runUrl} target="_blank" rel="noreferrer">{repoLabel(it.repository)} · {it.workflow} ↗</a></td>
-                  <td>{it.category}</td>
-                  <td>{it.confidence}</td>
+              {failing.map((f) => (
+                <tr key={`${f.repository}/${f.lane}`}>
                   <td>
-                    <div>{it.summary}</div>
-                    {it.needsAction && it.suggestedAction && it.suggestedAction.toLowerCase() !== 'none' ? (
-                      <div className="ci-muted">→ {it.suggestedAction}</div>
-                    ) : null}
+                    <a href={f.lastRunUrl} target="_blank" rel="noreferrer">{repoLabel(f.repository)} · {f.lane} ↗</a>
                   </td>
+                  <td className="ci-muted">
+                    {f.streak} build{f.streak === 1 ? '' : 's'} · {formatAge(f.failingSince)}
+                    {f.cadenceMinutes ? <> · ~{cadenceLabel(f.cadenceMinutes)}</> : null}
+                  </td>
+                  <td><VerdictCell verdict={verdictByRun.get(f.lastRunId)} /></td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <p className="ci-strip-meta">triage {relativeTime(triage.updatedAt)}</p>
+          {triage ? <p className="ci-strip-meta">triage {relativeTime(triage.updatedAt)}</p> : null}
         </>
       )}
     </section>
@@ -177,7 +209,8 @@ function CiHealthView() {
         <CiRefreshButton refreshing={refreshing} refreshError={refreshError} onRefresh={refresh} />
       </section>
 
-      <TriageBlock
+      <FailingNowBlock
+        failing={pulse?.failingNow ?? []}
         triage={data.triage}
         triaging={triaging}
         triageError={triageError}
