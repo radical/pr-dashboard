@@ -12,8 +12,11 @@ builder.Services.Configure<WebPushOptions>(
     builder.Configuration.GetSection(WebPushOptions.SectionName));
 builder.Services.Configure<GitHubReviewPolicyOptions>(
     builder.Configuration.GetSection(GitHubReviewPolicyOptions.SectionName));
+builder.Services.Configure<CiHealthOptions>(
+    builder.Configuration.GetSection(CiHealthOptions.SectionName));
 builder.Services.AddGitHubApiServices(builder.Environment);
 builder.Services.AddNotificationServices();
+builder.Services.AddCiHealthServices();
 
 var app = builder.Build();
 
@@ -28,6 +31,7 @@ if (app.Environment.IsDevelopment())
 app.MapGitHubAuthRoutes();
 app.MapGitHubPullRequestRoutes();
 app.MapNotificationRoutes();
+app.MapCiHealthRoutes();
 app.MapGet("/api/app-info", (IConfiguration configuration) =>
 {
     var commitSha = configuration["GIT_COMMIT_SHA"]?.Trim() is { Length: > 0 } configuredCommitSha
