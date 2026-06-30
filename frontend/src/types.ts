@@ -356,15 +356,18 @@ export type TimelineStoryEntry =
 export type WorkflowPulse = {
   repository: string;
   workflow: string;
+  lane: string;
   runs: number;
   passes: number;
   passRate: number;
+  greenAtTip: boolean;
   sequence: boolean[];
 };
 
 export type FailingWorkflow = {
   repository: string;
   workflow: string;
+  lane: string;
   failingSince: string;
   streak: number;
   lastRunId: number;
@@ -376,6 +379,7 @@ export type FailingWorkflow = {
 export type WorkflowWeekly = {
   repository: string;
   workflow: string;
+  lane: string;
   passRate: number;
   priorPassRate: number;
   delta: number;

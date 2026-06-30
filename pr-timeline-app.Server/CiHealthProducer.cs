@@ -87,7 +87,8 @@ sealed class CiHealthProducer(
 
             try
             {
-                var runs = FilterWorkflows(repository, await gitHub.GetWorkflowRunsAsync(repository, now - window, cancellationToken));
+                var defaultBranch = await gitHub.GetDefaultBranchAsync(repository, cancellationToken);
+                var runs = ToLanes(repository, await gitHub.GetWorkflowRunsAsync(repository, now - window, cancellationToken), defaultBranch);
                 var (repoPulses, repoFailing) = CiHealthComputer.ComputePulse(runs, now, window, config.StreakThreshold);
                 pulses.AddRange(repoPulses);
                 failing.AddRange(repoFailing);
@@ -126,15 +127,15 @@ sealed class CiHealthProducer(
                 // Fetch runs per workflow so the 14-day window isn't truncated by the repo-wide
                 // /actions/runs ~1000-result ceiling on busy repos (which would zero out the prior
                 // week and fabricate the trend delta).
+                var defaultBranch = await gitHub.GetDefaultBranchAsync(repository, cancellationToken);
                 var definitions = FilterDefinitions(repository, await gitHub.GetWorkflowDefinitionsAsync(repository, cancellationToken));
-                var runs = new List<WorkflowRun>();
-                foreach (var definition in definitions)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    runs.AddRange(await gitHub.GetWorkflowRunsAsync(repository, since, cancellationToken, definition.Id));
-                }
+                // Fetch each workflow's runs concurrently; GitHubClient's internal request throttle
+                // bounds real concurrency. Sequential fetches are too slow on repos with many workflows.
+                var runLists = await Task.WhenAll(
+                    definitions.Select(definition => gitHub.GetWorkflowRunsAsync(repository, since, cancellationToken, definition.Id)));
+                var runs = runLists.SelectMany(list => list).ToList();
 
-                weekly.AddRange(CiHealthComputer.ComputeWeekly(FilterWorkflows(repository, runs), now, config.WeeklyWindowDays));
+                weekly.AddRange(CiHealthComputer.ComputeWeekly(ToLanes(repository, runs, defaultBranch), now, config.WeeklyWindowDays));
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -147,7 +148,7 @@ sealed class CiHealthProducer(
     }
 
     // When a per-repo workflow allowlist is configured, restrict the definitions we fetch runs for to
-    // that set (by name); otherwise fetch all of them and let FilterWorkflows apply the event filter.
+    // that set (by cleaned name); otherwise fetch all of them and let ToLanes apply the lane filter.
     private IReadOnlyList<WorkflowDefinition> FilterDefinitions(RepositoryName repository, IReadOnlyList<WorkflowDefinition> definitions)
     {
         if (!options.Value.Workflows.TryGetValue(repository.ToString(), out var allowed) || allowed.Length == 0)
@@ -156,7 +157,7 @@ sealed class CiHealthProducer(
         }
 
         var set = new HashSet<string>(allowed, StringComparer.OrdinalIgnoreCase);
-        return definitions.Where(definition => set.Contains(definition.Name)).ToList();
+        return definitions.Where(definition => set.Contains(WorkflowLane.CleanName(definition.Name)) || set.Contains(definition.Name)).ToList();
     }
 
     private IEnumerable<RepositoryName> ResolveRepositories()
@@ -174,16 +175,40 @@ sealed class CiHealthProducer(
         }
     }
 
-    private IReadOnlyList<WorkflowRun> FilterWorkflows(RepositoryName repository, IReadOnlyList<WorkflowRun> runs)
+    // Assigns each run to a lane (workflow x trigger), dropping runs that aren't main-push / PR /
+    // scheduled, and (when configured) keeping only allowlisted workflows. Tags the run with its
+    // cleaned workflow name, trigger, and lane label for the computer to group on.
+    private IReadOnlyList<WorkflowRun> ToLanes(RepositoryName repository, IReadOnlyList<WorkflowRun> runs, string defaultBranch)
     {
-        if (!options.Value.Workflows.TryGetValue(repository.ToString(), out var allowed) || allowed.Length == 0)
+        options.Value.Workflows.TryGetValue(repository.ToString(), out var allowed);
+        var allowSet = allowed is { Length: > 0 }
+            ? new HashSet<string>(allowed, StringComparer.OrdinalIgnoreCase)
+            : null;
+
+        var result = new List<WorkflowRun>();
+        foreach (var run in runs)
         {
-            // No explicit allowlist: count workflows triggered by push / pull_request (skip schedule etc.).
-            return runs.Where(run => run.Event is "push" or "pull_request").ToList();
+            var trigger = WorkflowLane.Classify(run.Event, run.HeadBranch, defaultBranch);
+            if (trigger == LaneTrigger.Other)
+            {
+                continue;
+            }
+
+            var cleanName = WorkflowLane.CleanName(run.Workflow);
+            if (allowSet is not null && !allowSet.Contains(cleanName) && !allowSet.Contains(run.Workflow))
+            {
+                continue;
+            }
+
+            result.Add(run with
+            {
+                Workflow = cleanName,
+                Trigger = trigger,
+                Lane = WorkflowLane.LaneLabel(run.Workflow, trigger),
+            });
         }
 
-        var set = new HashSet<string>(allowed, StringComparer.OrdinalIgnoreCase);
-        return runs.Where(run => set.Contains(run.Workflow)).ToList();
+        return result;
     }
 
     private static IReadOnlyList<CandidatePullRequest> ToCandidates(

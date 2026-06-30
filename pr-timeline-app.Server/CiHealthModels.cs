@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 
-// Normalized GitHub Actions run (one workflow execution) used by the pure computer.
+// Normalized GitHub Actions run (one workflow execution) used by the pure computer. Lane/Trigger are
+// filled by the producer once it knows the repo's default branch; until then they default to Other/"".
 record WorkflowRun(
     string Repository,
     string Workflow,
@@ -10,24 +11,33 @@ record WorkflowRun(
     long RunId,
     string HtmlUrl,
     string HeadBranch,
-    string Event);        // push | pull_request | schedule | ...
+    string Event)         // push | pull_request | schedule | ...
+{
+    public string Lane { get; init; } = "";
+
+    public LaneTrigger Trigger { get; init; } = LaneTrigger.Other;
+}
 
 // A workflow definition (id + display name) from the repo's /actions/workflows list.
 record WorkflowDefinition(long Id, string Name);
 
-// 36h pulse for one workflow: pass rate + the most-recent run-by-run sequence (true = pass).
+// 36h pulse for one lane: pass rate, the most-recent run-by-run sequence (true = pass), and whether the
+// latest decided run passed (green-at-tip, distinct from the window pass rate).
 record WorkflowPulse(
     string Repository,
     string Workflow,
+    string Lane,
     int Runs,
     int Passes,
     double PassRate,
+    bool GreenAtTip,
     IReadOnlyList<bool> Sequence);
 
-// A workflow currently red. LinkedIssue is reserved for the future reaction engine (null in v1).
+// A lane currently red at tip. LinkedIssue is reserved for the future reaction engine (null in v1).
 record FailingWorkflow(
     string Repository,
     string Workflow,
+    string Lane,
     DateTimeOffset FailingSince,
     int Streak,
     long LastRunId,
@@ -35,10 +45,11 @@ record FailingWorkflow(
     bool LikelyReal,
     string? LinkedIssue);
 
-// 7d trend for one workflow, with delta vs the prior 7d and per-day pass-rate buckets.
+// 7d trend for one lane, with delta vs the prior 7d and per-day pass-rate buckets.
 record WorkflowWeekly(
     string Repository,
     string Workflow,
+    string Lane,
     double PassRate,
     double PriorPassRate,
     double Delta,

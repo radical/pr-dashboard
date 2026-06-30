@@ -6,7 +6,7 @@ public sealed class CiHealthComputerTests
 {
     private static readonly DateTimeOffset Now = new(2026, 6, 29, 12, 0, 0, TimeSpan.Zero);
 
-    private static WorkflowRun Run(string conclusion, double hoursAgo, long id = 0) =>
+    private static WorkflowRun Run(string conclusion, double hoursAgo, long id = 0, string lane = "ci · main") =>
         new(
             Repository: "microsoft/aspire",
             Workflow: "ci",
@@ -16,7 +16,10 @@ public sealed class CiHealthComputerTests
             RunId: id,
             HtmlUrl: $"https://github.com/microsoft/aspire/actions/runs/{id}",
             HeadBranch: "main",
-            Event: "push");
+            Event: "push")
+        {
+            Lane = lane,
+        };
 
     [Fact]
     public void Pulse_CountsOnlyCompletedRunsInWindow_AndComputesPassRate()
@@ -38,6 +41,41 @@ public sealed class CiHealthComputerTests
         Assert.Equal(2d / 3d, ci.PassRate, 3);
         // Sequence is newest-first: success(1h), failure(2h), success(3h)
         Assert.Equal(new[] { true, false, true }, ci.Sequence);
+        Assert.Equal("ci · main", ci.Lane);
+        Assert.True(ci.GreenAtTip);                 // newest decided run (1h) passed
+    }
+
+    [Fact]
+    public void Pulse_GreenAtTipReflectsLatestRun_NotWindowRate()
+    {
+        // Window has a failure, but the most recent decided run passed -> green at tip.
+        var runs = new[] { Run("success", 1, 3), Run("failure", 2, 2), Run("failure", 4, 1) };
+
+        var (pulse, failing) = CiHealthComputer.ComputePulse(runs, Now, TimeSpan.FromHours(36), streakThreshold: 3);
+
+        Assert.True(Assert.Single(pulse).GreenAtTip);
+        Assert.Empty(failing);                      // tip is green, so nothing failing-now
+    }
+
+    [Fact]
+    public void Pulse_SplitsSameWorkflowIntoSeparateLanes()
+    {
+        // ci.yml on push-to-main and on PR are distinct lanes and must not be blended.
+        var runs = new[]
+        {
+            Run("success", 1, 1, lane: "ci · main"),
+            Run("success", 2, 2, lane: "ci · main"),
+            Run("failure", 1, 3, lane: "ci · PR"),
+            Run("success", 3, 4, lane: "ci · PR"),
+        };
+
+        var (pulse, _) = CiHealthComputer.ComputePulse(runs, Now, TimeSpan.FromHours(36), streakThreshold: 3);
+
+        Assert.Equal(2, pulse.Count);
+        var main = pulse.Single(p => p.Lane == "ci · main");
+        var pr = pulse.Single(p => p.Lane == "ci · PR");
+        Assert.Equal(1.0, main.PassRate, 3);
+        Assert.Equal(0.5, pr.PassRate, 3);
     }
 
     [Fact]

@@ -23,7 +23,7 @@ static class CiHealthComputer
         var pulses = new List<WorkflowPulse>();
         var failing = new List<FailingWorkflow>();
 
-        foreach (var group in GroupByWorkflow(runs))
+        foreach (var group in GroupByLane(runs))
         {
             // Newest-first, decided runs within the window.
             var decided = group.Runs
@@ -41,9 +41,11 @@ static class CiHealthComputer
             pulses.Add(new WorkflowPulse(
                 group.Repository,
                 group.Workflow,
+                group.Lane,
                 decided.Count,
                 passes,
                 (double)passes / decided.Count,
+                GreenAtTip: IsPass(decided[0]),
                 decided.Select(IsPass).ToList()));
 
             // Failing-now: only when the most recent decided run failed.
@@ -53,6 +55,7 @@ static class CiHealthComputer
                 failing.Add(new FailingWorkflow(
                     group.Repository,
                     group.Workflow,
+                    group.Lane,
                     FailingSince: streakRuns[^1].CreatedAt,
                     Streak: streakRuns.Count,
                     LastRunId: decided[0].RunId,
@@ -75,7 +78,7 @@ static class CiHealthComputer
         var priorCutoff = now - window - window;
         var weekly = new List<WorkflowWeekly>();
 
-        foreach (var group in GroupByWorkflow(runs))
+        foreach (var group in GroupByLane(runs))
         {
             var decided = group.Runs.Where(IsDecided).ToList();
 
@@ -105,6 +108,7 @@ static class CiHealthComputer
             weekly.Add(new WorkflowWeekly(
                 group.Repository,
                 group.Workflow,
+                group.Lane,
                 passRate,
                 priorPassRate,
                 passRate - priorPassRate,
@@ -117,9 +121,11 @@ static class CiHealthComputer
     private static double PassRate(IReadOnlyCollection<WorkflowRun> runs) =>
         runs.Count == 0 ? 0d : (double)runs.Count(IsPass) / runs.Count;
 
-    private static IEnumerable<(string Repository, string Workflow, List<WorkflowRun> Runs)> GroupByWorkflow(
+    // Group by lane (workflow x trigger). Each lane carries a representative cleaned workflow name and
+    // the full lane label, both already set on the runs by the producer.
+    private static IEnumerable<(string Repository, string Workflow, string Lane, List<WorkflowRun> Runs)> GroupByLane(
         IReadOnlyList<WorkflowRun> runs) =>
         runs
-            .GroupBy(run => (run.Repository, run.Workflow))
-            .Select(group => (group.Key.Repository, group.Key.Workflow, group.ToList()));
+            .GroupBy(run => (run.Repository, run.Lane))
+            .Select(group => (group.Key.Repository, group.First().Workflow, group.Key.Lane, group.ToList()));
 }

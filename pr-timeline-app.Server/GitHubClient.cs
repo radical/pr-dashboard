@@ -519,6 +519,21 @@ sealed partial class GitHubClient(
             cancellationToken);
     }
 
+    // Returns the repository's default branch (e.g. "main"), used to classify push runs into the
+    // "main" lane. One cheap GET /repos/{owner}/{repo} per cycle.
+    public async Task<string> GetDefaultBranchAsync(
+        RepositoryName repositoryName,
+        CancellationToken cancellationToken)
+    {
+        var url = $"repos/{repositoryName.Owner}/{repositoryName.Name}";
+        using var response = await SendGitHubRequestAsync(url, GitHubRequestAuthorization.PublicCacheToken, cancellationToken);
+        var payload = await ReadGitHubJsonAsync(
+            response,
+            GitHubJsonSerializerContext.Default.GitHubRepositoryDto,
+            cancellationToken);
+        return payload.DefaultBranch ?? "main";
+    }
+
     // Lists a repo's workflow definitions (id + display name). Used by the weekly cycle to fetch runs
     // per workflow, which avoids the repo-wide /actions/runs ~1000-result ceiling truncating the
     // 14-day window on busy repos.

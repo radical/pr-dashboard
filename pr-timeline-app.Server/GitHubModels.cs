@@ -710,6 +710,9 @@ sealed class GitHubErrorDto
 sealed class GitHubRepositoryDto
 {
     public string? Visibility { get; init; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("default_branch")]
+    public string? DefaultBranch { get; init; }
 }
 
 sealed class GitHubLabelDto
