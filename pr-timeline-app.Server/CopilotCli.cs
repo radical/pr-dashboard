@@ -74,6 +74,11 @@ sealed class CopilotCli(IOptions<CiHealthOptions> options, ILogger<CopilotCli> l
         startInfo.ArgumentList.Add(workDir);
         startInfo.ArgumentList.Add("--output-format");
         startInfo.ArgumentList.Add("json");
+        if (!string.IsNullOrWhiteSpace(config.Model))
+        {
+            startInfo.ArgumentList.Add("--model");
+            startInfo.ArgumentList.Add(config.Model);
+        }
         startInfo.ArgumentList.Add("-p");
         startInfo.ArgumentList.Add(prompt);
 

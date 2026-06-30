@@ -1,13 +1,15 @@
 using Microsoft.Extensions.Options;
 
-// Cadenced producer: pulse (36h) recomputed hourly, weekly (7d) recomputed daily. Mirrors
-// GitHubPublicCacheWarmupService (repo loop, server token via GitHubClient, rate-limit tolerant) and
-// NotificationDetectorService (PeriodicTimer + internal cycle methods exposed for tests). Runs under
-// the AppHost's single-replica pinning. The reaction engine (open issue / dispatch agent / drive PR)
-// is intentionally NOT here in v1; when it lands, extract this into a dedicated worker project.
+// Cadenced producer: pulse recomputed on the fast (main-lane) cadence, weekly (7d) recomputed daily.
+// Mirrors GitHubPublicCacheWarmupService (repo loop, server token via GitHubClient, rate-limit tolerant)
+// and NotificationDetectorService (PeriodicTimer + internal cycle methods exposed for tests). Runs under
+// the AppHost's single-replica pinning. When AutoTriage is on (dev), each pulse cycle also runs the
+// cost-gated per-failure triage. The reaction engine (open issue / dispatch agent / drive PR) is
+// intentionally NOT here in v1; when it lands, extract this into a dedicated worker project.
 sealed class CiHealthProducer(
     IServiceScopeFactory scopeFactory,
     CiHealthSnapshotStore store,
+    CiTriageRunner triageRunner,
     IOptions<CiHealthOptions> options,
     IOptions<GitHubCacheWarmupOptions> warmupOptions,
     IHostEnvironment environment,
@@ -40,7 +42,9 @@ sealed class CiHealthProducer(
 
         await SafeRunAsync(stoppingToken);
 
-        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(options.Value.PulseRefreshMinutes), timeProvider);
+        // Tick at the fast (main-lane) cadence; scheduled lanes change rarely so re-reading them at the
+        // fast cadence is cheap (cached). Per-lane cadence is carried for display + future notifications.
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(options.Value.MainPulseRefreshMinutes), timeProvider);
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
             await SafeRunAsync(stoppingToken);
@@ -59,7 +63,22 @@ sealed class CiHealthProducer(
             // resolves one, else the shared public-cache server token) is handled inside GitHubClient's
             // scope resolution — the same path PR fetching uses. The cadence relies on the cache, so it
             // does not force a refresh.
-            await RunPulseCycleAsync(forceRefresh: false, cancellationToken);
+            var pulse = await RunPulseCycleAsync(forceRefresh: false, cancellationToken);
+
+            // Auto-triage the red-at-tip lanes when enabled (dev: the CLI/gh are available). Cost-gated
+            // inside the runner — only new failing runs hit the model — so this is mostly a no-op cycle to
+            // cycle. Failures are isolated so triage never breaks the pulse cadence.
+            if (options.Value.Triage is { Enabled: true, AutoTriage: true } && pulse.FailingNow.Count > 0)
+            {
+                try
+                {
+                    await triageRunner.RunAsync(pulse.FailingNow, timeProvider.GetUtcNow(), cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    logger.LogWarning(ex, "Auto-triage failed; pulse snapshot is unaffected.");
+                }
+            }
 
             var now = timeProvider.GetUtcNow();
             if (now - _lastWeekly >= TimeSpan.FromHours(options.Value.WeeklyRefreshHours))
@@ -128,7 +147,9 @@ sealed class CiHealthProducer(
                 var runs = ToLanes(repository, await gitHub.GetWorkflowRunsAsync(repository, now - window, cancellationToken, workflowId: null, forceRefresh), defaultBranch);
                 var (repoPulses, repoFailing) = CiHealthComputer.ComputePulse(runs, now, window, config.StreakThreshold);
                 pulses.AddRange(repoPulses);
-                failing.AddRange(repoFailing);
+                // Stamp each failing lane's cadence (main = fast tier, scheduled = slow tier) for display
+                // and future per-pipeline notification pacing.
+                failing.AddRange(repoFailing.Select(f => f with { CadenceMinutes = config.CadenceMinutesFor(f.Section, f.Workflow) }));
 
                 // GraphQL fetch so bot PRs carry merge-readiness state (mergeable / checks / review).
                 // forceRefresh follows the cycle: the timer relies on the shared cache, a manual refresh

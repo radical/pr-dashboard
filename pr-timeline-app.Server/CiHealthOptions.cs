@@ -24,9 +24,24 @@ sealed class CiHealthOptions
 
     public int WeeklyWindowDays { get; init; } = 7;
 
+    // Pulse cadence is two-tier: main lanes are checked on the fast cadence, scheduled/other lanes on
+    // the slow one. The background timer ticks at the fast cadence; each lane carries its own cadence so
+    // the UI can show it and (future) notifications can pace per pipeline.
+    public int MainPulseRefreshMinutes { get; init; } = 10;
+
     public int PulseRefreshMinutes { get; init; } = 60;
 
     public int WeeklyRefreshHours { get; init; } = 24;
+
+    // Per-pipeline cadence override by cleaned workflow name (e.g. a 30-minute scheduled job), in
+    // minutes. Falls back to the main/scheduled tier when a lane has no entry.
+    public Dictionary<string, int> RefreshCadenceOverrides { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
+    // The cadence (minutes) for a lane, given its section ("main" => fast tier) and cleaned workflow name.
+    public int CadenceMinutesFor(string section, string workflow) =>
+        RefreshCadenceOverrides.TryGetValue(workflow, out var minutes)
+            ? minutes
+            : (string.Equals(section, "main", StringComparison.OrdinalIgnoreCase) ? MainPulseRefreshMinutes : PulseRefreshMinutes);
 
     // Consecutive failures at/above this are classified "likely real" (vs a single maybe-flaky failure).
     public int StreakThreshold { get; init; } = 3;
@@ -41,11 +56,22 @@ sealed class CiTriageOptions
     // dashboard's "Run triage" action works locally where `copilot` and `gh` are installed + signed in.
     public bool Enabled { get; init; }
 
+    // Run triage automatically after each pulse cycle (cost-gated by last run id). Dev-only in practice
+    // since prod has no CLI; the page degrades to the numbers-only failing-now list when off.
+    public bool AutoTriage { get; init; }
+
     // The Copilot CLI executable (resolved on PATH unless an absolute path is given).
     public string Command { get; init; } = "copilot";
 
-    // Cap on how many failing lanes a single triage pass investigates (bounds the credit/request budget).
+    // Lighter model for the cheap "is this real?" triage pass (copilot --model). "auto" lets Copilot pick.
+    public string Model { get; init; } = "auto";
+
+    // Cap on how many NEW failing lanes a single triage pass sends to the LLM (reused verdicts for
+    // unchanged runs are free and uncapped). Bounds the per-cycle credit/request budget.
     public int MaxLanes { get; init; } = 8;
+
+    // How many past verdicts to keep per lane for recurrence ("same failure for N builds") + issue context.
+    public int HistoryPerLane { get; init; } = 12;
 
     // Hard wall-clock limit for the agentic CLI run; on timeout the process is killed and an error is surfaced.
     public int TimeoutSeconds { get; init; } = 300;

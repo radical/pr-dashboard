@@ -42,6 +42,7 @@ record WorkflowPulse(
     IReadOnlyList<RunRef> Sequence);
 
 // A lane currently red at tip. LinkedIssue is reserved for the future reaction engine (null in v1).
+// CadenceMinutes is how often this lane is re-checked (main lanes fast, scheduled slow).
 record FailingWorkflow(
     string Repository,
     string Workflow,
@@ -52,7 +53,10 @@ record FailingWorkflow(
     long LastRunId,
     string LastRunUrl,
     bool LikelyReal,
-    string? LinkedIssue);
+    string? LinkedIssue)
+{
+    public int CadenceMinutes { get; init; }
+}
 
 // 7d trend for one lane, with delta vs the prior 7d and per-day pass-rate buckets.
 record WorkflowWeekly(
@@ -134,6 +138,7 @@ record CiHealthResponse(
 [JsonSerializable(typeof(CiHealthResponse))]
 [JsonSerializable(typeof(CiTriageSnapshot))]
 [JsonSerializable(typeof(CiTriagePayload))]
+[JsonSerializable(typeof(CiTriageHistory))]
 [JsonSerializable(typeof(BotShepherdSnapshot))]
 [JsonSerializable(typeof(BotShepherdPayload))]
 partial class CiHealthJsonContext : JsonSerializerContext;
