@@ -17,7 +17,7 @@ export type AuthStatus = {
 
 export type PullState = 'open' | 'closed' | 'all';
 
-export type DashboardMode = 'review' | 'ship' | 'issues';
+export type DashboardMode = 'review' | 'ship' | 'issues' | 'ci-health';
 
 export type PullRequestSummary = {
   repository: string;
@@ -352,3 +352,59 @@ export type TimelineStoryEntry =
     detail: string;
     count: number;
   };
+
+export type WorkflowPulse = {
+  repository: string;
+  workflow: string;
+  runs: number;
+  passes: number;
+  passRate: number;
+  sequence: boolean[];
+};
+
+export type FailingWorkflow = {
+  repository: string;
+  workflow: string;
+  failingSince: string;
+  streak: number;
+  lastRunId: number;
+  lastRunUrl: string;
+  likelyReal: boolean;
+  linkedIssue: string | null;
+};
+
+export type WorkflowWeekly = {
+  repository: string;
+  workflow: string;
+  passRate: number;
+  priorPassRate: number;
+  delta: number;
+  dailyPassRates: number[];
+};
+
+export type BotPullRequest = {
+  repository: string;
+  number: number;
+  title: string;
+  author: string;
+  htmlUrl: string;
+  ciStatus: string;
+  labels: string[];
+};
+
+export type CiHealthPulseSnapshot = {
+  workflows: WorkflowPulse[];
+  failingNow: FailingWorkflow[];
+  botPrs: BotPullRequest[];
+  updatedAt: string;
+};
+
+export type CiHealthWeeklySnapshot = {
+  workflows: WorkflowWeekly[];
+  updatedAt: string;
+};
+
+export type CiHealthResponse = {
+  pulse: CiHealthPulseSnapshot | null;
+  weekly: CiHealthWeeklySnapshot | null;
+};
