@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { CiHealthResponse } from '../../types';
-import { fetchCiHealth, refreshCiHealth } from '../../utils/ciHealth';
+import { fetchCiHealth, refreshCiHealth, runCiTriage } from '../../utils/ciHealth';
 
 // Shared state for the CI health and Bots pages: initial load of the cached snapshot plus an on-demand
 // "refresh now" that re-runs the server pulse and swaps in the fresh snapshot.
@@ -9,6 +9,8 @@ export function useCiHealth() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [triaging, setTriaging] = useState(false);
+  const [triageError, setTriageError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -34,5 +36,17 @@ export function useCiHealth() {
     }
   }, []);
 
-  return { data, error, refreshing, refreshError, refresh };
+  const triage = useCallback(async () => {
+    setTriaging(true);
+    setTriageError(null);
+    try {
+      setData(await runCiTriage());
+    } catch (err: unknown) {
+      setTriageError(err instanceof Error ? err.message : 'Triage failed');
+    } finally {
+      setTriaging(false);
+    }
+  }, []);
+
+  return { data, error, refreshing, refreshError, refresh, triaging, triageError, triage };
 }

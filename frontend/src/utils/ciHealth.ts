@@ -14,3 +14,16 @@ export async function refreshCiHealth(signal?: AbortSignal): Promise<CiHealthRes
   }
   return readJson<CiHealthResponse>(response);
 }
+
+// Triggers an on-demand Copilot triage of the currently-failing lanes (auth-gated). This shells out to
+// the Copilot CLI on the server and can take a few minutes, so callers should expect a long wait.
+export async function runCiTriage(signal?: AbortSignal): Promise<CiHealthResponse> {
+  const response = await fetch('/api/ci-health/triage', { method: 'POST', signal });
+  if (response.status === 401) {
+    throw new Error('Sign in with GitHub to run triage.');
+  }
+  if (response.status === 503) {
+    throw new Error('CI triage is disabled on this server.');
+  }
+  return readJson<CiHealthResponse>(response);
+}

@@ -92,7 +92,8 @@ sealed class CiHealthProducer(
         {
             var pulse = await RunPulseCycleAsync(forceRefresh: true, cancellationToken);
             var weekly = await store.ReadWeeklyAsync(cancellationToken);
-            return new CiHealthResponse(pulse, weekly);
+            var triage = await store.ReadTriageAsync(cancellationToken);
+            return new CiHealthResponse(pulse, weekly, triage);
         }
         finally
         {

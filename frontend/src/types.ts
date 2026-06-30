@@ -431,7 +431,26 @@ export type CiHealthWeeklySnapshot = {
   updatedAt: string;
 };
 
+export type CiTriageItem = {
+  repository: string;
+  workflow: string;
+  runId: number;
+  runUrl: string;
+  needsAction: boolean;
+  category: string;
+  confidence: string;
+  summary: string;
+  suggestedAction: string;
+};
+
+export type CiTriageSnapshot = {
+  items: CiTriageItem[];
+  updatedAt: string;
+  error: string | null;
+};
+
 export type CiHealthResponse = {
   pulse: CiHealthPulseSnapshot | null;
   weekly: CiHealthWeeklySnapshot | null;
+  triage: CiTriageSnapshot | null;
 };

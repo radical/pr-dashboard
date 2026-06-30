@@ -10,6 +10,7 @@ sealed class CiHealthSnapshotStore(
 {
     private const string PulseBlobName = "ci-health/pulse.json";
     private const string WeeklyBlobName = "ci-health/weekly.json";
+    private const string TriageBlobName = "ci-health/triage.json";
 
     public Task<CiHealthPulseSnapshot?> ReadPulseAsync(CancellationToken cancellationToken) =>
         ReadAsync(PulseBlobName, CiHealthJsonContext.Default.CiHealthPulseSnapshot, cancellationToken);
@@ -22,6 +23,12 @@ sealed class CiHealthSnapshotStore(
 
     public Task WriteWeeklyAsync(CiHealthWeeklySnapshot snapshot, CancellationToken cancellationToken) =>
         WriteAsync(WeeklyBlobName, snapshot, CiHealthJsonContext.Default.CiHealthWeeklySnapshot, cancellationToken);
+
+    public Task<CiTriageSnapshot?> ReadTriageAsync(CancellationToken cancellationToken) =>
+        ReadAsync(TriageBlobName, CiHealthJsonContext.Default.CiTriageSnapshot, cancellationToken);
+
+    public Task WriteTriageAsync(CiTriageSnapshot snapshot, CancellationToken cancellationToken) =>
+        WriteAsync(TriageBlobName, snapshot, CiHealthJsonContext.Default.CiTriageSnapshot, cancellationToken);
 
     private async Task<T?> ReadAsync<T>(
         string blobName,

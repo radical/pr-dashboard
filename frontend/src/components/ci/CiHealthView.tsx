@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { WorkflowPulse, WorkflowWeekly } from '../../types';
+import type { CiTriageSnapshot, WorkflowPulse, WorkflowWeekly } from '../../types';
 import { buildRepoLabeler, delta, percent, relativeTime } from './ciFormat';
 import { useCiHealth } from './useCiHealth';
 import CiRefreshButton from './CiRefreshButton';
@@ -70,8 +70,69 @@ function WeeklyTable({ lanes, repoLabel }: { lanes: WorkflowWeekly[]; repoLabel:
   );
 }
 
+// Copilot-produced triage of the currently-failing lanes. "Run triage" shells out to the Copilot CLI on
+// the server (a few minutes) and swaps in the result; each item links to its failing run.
+function TriageBlock({
+  triage,
+  triaging,
+  triageError,
+  onRun,
+  repoLabel,
+}: {
+  triage: CiTriageSnapshot | null;
+  triaging: boolean;
+  triageError: string | null;
+  onRun: () => void;
+  repoLabel: (repo: string) => string;
+}) {
+  return (
+    <section className="ci-block">
+      <h3>
+        🔎 CI failure triage (Copilot)
+        <button type="button" className="ci-refresh" onClick={onRun} disabled={triaging}>
+          {triaging ? 'Running triage…' : '🤖 Run triage'}
+        </button>
+      </h3>
+      {triageError ? <p className="ci-refresh-error">{triageError}</p> : null}
+      {triaging ? (
+        <p className="ci-muted">Asking Copilot to investigate the failing lanes — this can take a few minutes…</p>
+      ) : null}
+      {!triage ? (
+        <p className="ci-empty">No triage yet. Click “Run triage” to ask Copilot to investigate the currently-failing lanes.</p>
+      ) : triage.error ? (
+        <p className="ci-empty">Triage error: {triage.error}</p>
+      ) : triage.items.length === 0 ? (
+        <p className="ci-empty">No failing lanes to triage. 🎉</p>
+      ) : (
+        <>
+          <table className="ci-table">
+            <thead><tr><th>Action</th><th>Repo / workflow</th><th>Category</th><th>Confidence</th><th>Assessment</th></tr></thead>
+            <tbody>
+              {triage.items.map((it) => (
+                <tr key={`${it.repository}#${it.runId}`}>
+                  <td title={it.needsAction ? 'needs action' : 'no action needed'}>{it.needsAction ? '⚠️' : '✅'}</td>
+                  <td><a href={it.runUrl} target="_blank" rel="noreferrer">{repoLabel(it.repository)} · {it.workflow} ↗</a></td>
+                  <td>{it.category}</td>
+                  <td>{it.confidence}</td>
+                  <td>
+                    <div>{it.summary}</div>
+                    {it.needsAction && it.suggestedAction && it.suggestedAction.toLowerCase() !== 'none' ? (
+                      <div className="ci-muted">→ {it.suggestedAction}</div>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="ci-strip-meta">triage {relativeTime(triage.updatedAt)}</p>
+        </>
+      )}
+    </section>
+  );
+}
+
 function CiHealthView() {
-  const { data, error, refreshing, refreshError, refresh } = useCiHealth();
+  const { data, error, refreshing, refreshError, refresh, triaging, triageError, triage } = useCiHealth();
   const [showAllScheduled, setShowAllScheduled] = useState(false);
 
   if (error) {
@@ -115,6 +176,14 @@ function CiHealthView() {
         </span>
         <CiRefreshButton refreshing={refreshing} refreshError={refreshError} onRefresh={refresh} />
       </section>
+
+      <TriageBlock
+        triage={data.triage}
+        triaging={triaging}
+        triageError={triageError}
+        onRun={triage}
+        repoLabel={repoLabel}
+      />
 
       <section className="ci-block">
         <h3>🌳 Main CI — 36h pass rate</h3>

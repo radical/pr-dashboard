@@ -114,13 +114,17 @@ record CiHealthWeeklySnapshot(
     IReadOnlyList<WorkflowWeekly> Workflows,
     DateTimeOffset UpdatedAt);
 
-// API response; either snapshot may be null before its first cycle has run.
+// API response; any snapshot may be null before its first cycle has run. Triage is the LLM pass over
+// the failing lanes (null until a triage has been requested at least once).
 record CiHealthResponse(
     CiHealthPulseSnapshot? Pulse,
-    CiHealthWeeklySnapshot? Weekly);
+    CiHealthWeeklySnapshot? Weekly,
+    CiTriageSnapshot? Triage);
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(CiHealthPulseSnapshot))]
 [JsonSerializable(typeof(CiHealthWeeklySnapshot))]
 [JsonSerializable(typeof(CiHealthResponse))]
+[JsonSerializable(typeof(CiTriageSnapshot))]
+[JsonSerializable(typeof(CiTriagePayload))]
 partial class CiHealthJsonContext : JsonSerializerContext;

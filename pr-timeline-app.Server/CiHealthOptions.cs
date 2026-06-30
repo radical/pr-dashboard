@@ -30,6 +30,25 @@ sealed class CiHealthOptions
 
     // Consecutive failures at/above this are classified "likely real" (vs a single maybe-flaky failure).
     public int StreakThreshold { get; init; } = 3;
+
+    // LLM triage of the failing lanes (shells out to the Copilot CLI for now; see CiTriageRunner).
+    public CiTriageOptions Triage { get; init; } = new();
+}
+
+sealed class CiTriageOptions
+{
+    // Off by default; the deployed environment has no Copilot CLI. Enabled in development so the
+    // dashboard's "Run triage" action works locally where `copilot` and `gh` are installed + signed in.
+    public bool Enabled { get; init; }
+
+    // The Copilot CLI executable (resolved on PATH unless an absolute path is given).
+    public string Command { get; init; } = "copilot";
+
+    // Cap on how many failing lanes a single triage pass investigates (bounds the credit/request budget).
+    public int MaxLanes { get; init; } = 8;
+
+    // Hard wall-clock limit for the agentic CLI run; on timeout the process is killed and an error is surfaced.
+    public int TimeoutSeconds { get; init; } = 300;
 }
 
 sealed class RepoLaneConfig
