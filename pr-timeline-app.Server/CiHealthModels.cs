@@ -58,7 +58,10 @@ record FailingWorkflow(
     public int CadenceMinutes { get; init; }
 }
 
-// 7d trend for one lane, with delta vs the prior 7d and per-day pass-rate buckets.
+// 7d trend for one lane, with delta vs the prior 7d and per-day pass-rate buckets. RecentRuns is a
+// run-by-run sequence (newest first) over the wider weekly fetch, so low-frequency lanes — which have
+// too few runs in the 36h pulse window to classify — still get enough samples for a pattern verdict.
+// Computed from runs the daily weekly cycle already fetched (no extra GitHub call).
 record WorkflowWeekly(
     string Repository,
     string Workflow,
@@ -68,7 +71,8 @@ record WorkflowWeekly(
     double PassRate,
     double PriorPassRate,
     double Delta,
-    IReadOnlyList<double> DailyPassRates);
+    IReadOnlyList<double> DailyPassRates,
+    IReadOnlyList<RunRef> RecentRuns);
 
 // An open bot/automated PR with its merge-readiness state (mirrors microsoft/aspire#18285):
 //   CiStatus  : "passing" | "failing" | "pending" | "unknown"

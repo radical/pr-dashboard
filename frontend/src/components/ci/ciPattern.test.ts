@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyPattern, describePattern } from './ciPattern';
+import { classifyPattern, describePattern, pickRunSequence, SUFFICIENT_RUNS } from './ciPattern';
 
 // Helpers build a newest-first sequence. `seq('FFFPP')` => tip (index 0) failed, then F,F,P,P (older).
 function seq(s: string): { pass: boolean }[] {
@@ -67,5 +67,27 @@ describe('describePattern', () => {
     const badge = describePattern({ kind: 'flaky', failStreak: 0, failRate: 0.4 });
     expect(badge.label).toBe('flaky · 40% fail');
     expect(badge.tone).toBe('warning');
+  });
+});
+
+describe('pickRunSequence', () => {
+  const many = (n: number) => Array.from({ length: n }, () => ({ pass: true }));
+
+  it('keeps the (more current) pulse sequence when it has enough samples', () => {
+    const pulse = many(SUFFICIENT_RUNS);
+    const weekly = many(20);
+    expect(pickRunSequence(pulse, weekly)).toBe(pulse);
+  });
+
+  it('falls back to the wider weekly history when the pulse window is too sparse', () => {
+    const pulse = many(2);
+    const weekly = many(14);
+    expect(pickRunSequence(pulse, weekly)).toBe(weekly);
+  });
+
+  it('keeps the pulse sequence when there is no richer weekly history', () => {
+    const pulse = many(2);
+    expect(pickRunSequence(pulse, undefined)).toBe(pulse);
+    expect(pickRunSequence(pulse, many(1))).toBe(pulse);
   });
 });

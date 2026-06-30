@@ -6,6 +6,10 @@ static class CiHealthComputer
     private static bool IsPass(WorkflowRun run) =>
         string.Equals(run.Conclusion, "success", StringComparison.OrdinalIgnoreCase);
 
+    // Cap on the per-lane run-by-run history stored on the weekly snapshot — enough to classify a
+    // pattern for sparse lanes without bloating the snapshot for high-frequency ones.
+    private const int WeeklyRecentRunsCap = 20;
+
     private static bool IsFail(WorkflowRun run) =>
         run.Conclusion is "failure" or "timed_out" or "startup_failure";
 
@@ -118,7 +122,14 @@ static class CiHealthComputer
                 passRate,
                 priorPassRate,
                 passRate - priorPassRate,
-                dailyPassRates));
+                dailyPassRates,
+                // Newest-first run-by-run history over the wider weekly fetch, capped so frequent lanes
+                // don't bloat the snapshot. Gives sparse lanes enough samples to classify a pattern.
+                decided
+                    .OrderByDescending(run => run.CreatedAt)
+                    .Take(WeeklyRecentRunsCap)
+                    .Select(run => new RunRef(IsPass(run), run.RunId, run.HtmlUrl))
+                    .ToList()));
         }
 
         return weekly;

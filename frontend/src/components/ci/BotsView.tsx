@@ -3,6 +3,7 @@ import { bucketBotPrs } from '../../utils/botBuckets';
 import { formatAge } from '../../utils/format';
 import { buildBotAttentionRows, type BotAttentionRow, type LaneMeta } from './botAttention';
 import { buildRepoLabeler, relativeTime } from './ciFormat';
+import { pickRunSequence } from './ciPattern';
 import { useCiHealth } from './useCiHealth';
 import CiRefreshButton from './CiRefreshButton';
 
@@ -57,7 +58,7 @@ function BotsView() {
     return <div className="ci-health-empty">Loading bot activity…</div>;
   }
 
-  const { pulse, botShepherd } = data;
+  const { pulse, weekly, botShepherd } = data;
   const botPrs = pulse?.botPrs ?? [];
   const botIssues = pulse?.botIssues ?? [];
   const failingNow = pulse?.failingNow ?? [];
@@ -66,10 +67,15 @@ function BotsView() {
   const workQueue = botShepherd?.workQueue ?? [];
 
   // Pulse-derived per-lane metadata, so the builder can mark top-tier CI breaks and label their pattern.
+  // Use the richer of the 36h pulse sequence and the wider weekly history so sparse lanes still classify.
+  const weeklyByLane = new Map((weekly?.workflows ?? []).map((w) => [laneKey(w.repository, w.lane), w] as const));
   const laneMeta = new Map<string, LaneMeta>(
     (pulse?.workflows ?? []).map((w: WorkflowPulse) => [
       laneKey(w.repository, w.lane),
-      { topTier: w.section === 'main' || w.alwaysShow, sequence: w.sequence },
+      {
+        topTier: w.section === 'main' || w.alwaysShow,
+        sequence: [...pickRunSequence(w.sequence, weeklyByLane.get(laneKey(w.repository, w.lane))?.recentRuns)],
+      },
     ]),
   );
 

@@ -396,6 +396,7 @@ export type WorkflowWeekly = {
   priorPassRate: number;
   delta: number;
   dailyPassRates: number[];
+  recentRuns: RunRef[];
 };
 
 export type BotPullRequest = {

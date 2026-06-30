@@ -4125,6 +4125,7 @@ img.avatar-dot {
 .ci-subrow td, .bots-subrow td { border-top: none; padding-top: 0; padding-bottom: 0.5rem; }
 .ci-subrow-inner { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 .ci-subrow-lbl { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; opacity: 0.6; }
+.ci-recent-cell { display: inline-flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 
 .bots-title { font-weight: 500; }
 .bots-action { font-size: 0.82rem; }

@@ -192,3 +192,53 @@ split:
 - **Bots determinism:** the unified table must render usefully before the
   shepherd runs (it often hasn't in prod, which has no CLI). The deterministic
   builder is the source of truth; shepherd output only enriches.
+
+## Addendum (2026-06-30): per-run history for all lanes + sparse-lane classification
+
+Follow-up to the above, addressing two gaps surfaced in review.
+
+### #1 — Show per-run blocks + pattern for *every* lane
+
+The initial redesign only rendered the 36h per-run blocks in *Failing now*;
+healthy lanes lost the per-run view they had in the old pulse tables (only the
+coarser 7d *daily* rollup remained). That made flaky-classification harder to
+*see* for green lanes. Fix: the merged trends table now shows a per-run
+`Recent` column (blocks + pattern pill) for all lanes. Pure frontend — the
+`sequence` is already in the pulse snapshot.
+
+### #2 — Enough samples to classify low-frequency lanes
+
+The 36h pulse window yields too few runs (1–2) for daily/weekly scheduled
+lanes, so `flaky` / `chronic` can't be judged for exactly those lanes.
+
+**Caching-safe approach (no new fetching):** the weekly cycle *already* fetches
+14 days of per-workflow runs (`RunWeeklyCycleAsync`). For a low-frequency lane
+those 14 days *are* the "last N builds". So `ComputeWeekly` now emits a
+`RecentRuns` list (newest-first, capped at 20) built from runs it already
+fetched, stored on the shared weekly snapshot.
+
+Why this respects the caching constraint:
+
+- **No new GitHub calls.** `RecentRuns` is derived from the weekly cycle's
+  existing fetch.
+- **No per-user cost.** Every visitor reads the shared Blob snapshot via
+  `GET /api/ci-health`; nothing is fetched per read.
+- **No per-refresh cost.** `RefreshNowAsync` reads the existing weekly snapshot
+  (it only recomputes the pulse), so the manual refresh button is unaffected.
+- **Tradeoff:** sparse-lane history refreshes on the **daily** weekly cadence,
+  not every 10 min. Acceptable — a daily lane produces ~1 run/day.
+
+**Client picks the richer source:** `pickRunSequence` uses the 36h pulse
+sequence when it has ≥ `SUFFICIENT_RUNS` (5) samples (most current), else the
+wider weekly `recentRuns`. Used for the failing-now blocks/pattern, the trends
+`Recent` column, and the Bots CI-break pattern label.
+
+### Surfaces touched
+
+- Backend: `WorkflowWeekly.RecentRuns` (`CiHealthModels.cs`) populated in
+  `CiHealthComputer.ComputeWeekly`; one new assertion in `CiHealthComputerTests`.
+  Additive record field — old snapshots without it deserialize to null and are
+  handled by the client guards (and overwritten by the next daily weekly cycle).
+- Frontend: `recentRuns` on the `WorkflowWeekly` type; `pickRunSequence` in
+  `ciPattern.ts`; wired through `CiHealthView` (failing-now + trends) and
+  `BotsView` (lane metadata).

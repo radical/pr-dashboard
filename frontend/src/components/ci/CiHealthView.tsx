@@ -1,7 +1,7 @@
-import type { CiTriageItem, CiTriageSnapshot, FailingWorkflow, WorkflowPulse, WorkflowWeekly } from '../../types';
+import type { CiTriageItem, CiTriageSnapshot, FailingWorkflow, RunRef, WorkflowPulse, WorkflowWeekly } from '../../types';
 import { formatAge } from '../../utils/format';
 import { buildRepoLabeler, delta, percent, relativeTime } from './ciFormat';
-import { classifyPattern, describePattern } from './ciPattern';
+import { classifyPattern, describePattern, pickRunSequence } from './ciPattern';
 import { useCiHealth } from './useCiHealth';
 import CiRefreshButton from './CiRefreshButton';
 
@@ -17,7 +17,7 @@ function isTopTier(pulse: WorkflowPulse | undefined, fallbackSection: string): b
 }
 
 // Per-run pass/fail blocks, oldest -> newest (left to right), each linking to its run.
-function RunBlocks({ sequence }: { sequence: WorkflowPulse['sequence'] }) {
+function RunBlocks({ sequence }: { sequence: readonly RunRef[] }) {
   if (sequence.length === 0) {
     return <span className="ci-muted">no recent runs</span>;
   }
@@ -37,7 +37,7 @@ function RunBlocks({ sequence }: { sequence: WorkflowPulse['sequence'] }) {
   );
 }
 
-function PatternPill({ sequence }: { sequence: WorkflowPulse['sequence'] }) {
+function PatternPill({ sequence }: { sequence: readonly RunRef[] }) {
   const badge = describePattern(classifyPattern(sequence));
   return <span className={`ci-pat ${badge.tone}`}>{badge.label}</span>;
 }
@@ -93,6 +93,7 @@ function VerdictCell({ verdict }: { verdict: CiTriageItem | undefined }) {
 type FailingRow = {
   failing: FailingWorkflow;
   pulse: WorkflowPulse | undefined;
+  sequence: readonly RunRef[];
   top: boolean;
   tone: 'top' | 'danger' | 'warning';
 };
@@ -137,8 +138,7 @@ function FailingNowBlock({
           <table className="ci-table ci-fail-table">
             <thead><tr><th></th><th>Lane</th><th>Repo</th><th>Failing</th><th>Assessment</th></tr></thead>
             <tbody>
-              {rows.map(({ failing: f, pulse, top, tone }) => {
-                const sequence = pulse?.sequence ?? [];
+              {rows.map(({ failing: f, pulse, sequence, top, tone }) => {
                 const descriptor = top ? (pulse?.section === 'main' ? 'push · main' : 'always-show') : null;
                 return [
                   <tr key={`${f.repository}/${f.lane}`} className={`ci-fail-row ${tone}`}>
@@ -176,8 +176,9 @@ function FailingNowBlock({
 }
 
 // Merged, de-emphasized "trends & healthy lanes": the old 36h/7d × main/scheduled tables collapse into
-// one details block, summarized in the summary line, with degrading lanes (negative delta) sorted first.
-function TrendsDetails({ weekly, greenCount, repoLabel }: { weekly: WorkflowWeekly[]; greenCount: number; repoLabel: (repo: string) => string }) {
+// one details block. Each lane shows its per-run blocks + pattern (richer of the 36h pulse sequence and
+// the wider weekly history, so sparse lanes still classify) plus the 7d daily trend, degrading first.
+function TrendsDetails({ weekly, pulseByLane, greenCount, repoLabel }: { weekly: WorkflowWeekly[]; pulseByLane: Map<string, WorkflowPulse>; greenCount: number; repoLabel: (repo: string) => string }) {
   const sorted = [...weekly].sort((a, b) => a.delta - b.delta);
   const avgPass = weekly.length ? weekly.reduce((sum, w) => sum + w.passRate, 0) / weekly.length : 1;
   return (
@@ -189,17 +190,26 @@ function TrendsDetails({ weekly, greenCount, repoLabel }: { weekly: WorkflowWeek
         <p className="ci-empty">No trend data yet.</p>
       ) : (
         <table className="ci-table">
-          <thead><tr><th>Repo</th><th>Lane</th><th>7d daily</th><th>7d pass</th><th>vs prior</th></tr></thead>
+          <thead><tr><th>Repo</th><th>Lane</th><th>Recent</th><th>7d daily</th><th>7d pass</th><th>vs prior</th></tr></thead>
           <tbody>
-            {sorted.map((w) => (
-              <tr key={`${w.repository}/${w.lane}`} className={w.delta < 0 ? 'ci-degrading' : undefined}>
-                <td>{repoLabel(w.repository)}</td>
-                <td>{w.lane}</td>
-                <td><DailyBlocks rates={w.dailyPassRates} /></td>
-                <td>{percent(w.passRate)}</td>
-                <td>{delta(w.delta)}</td>
-              </tr>
-            ))}
+            {sorted.map((w) => {
+              const sequence = pickRunSequence(pulseByLane.get(laneKey(w.repository, w.lane))?.sequence ?? [], w.recentRuns);
+              return (
+                <tr key={`${w.repository}/${w.lane}`} className={w.delta < 0 ? 'ci-degrading' : undefined}>
+                  <td>{repoLabel(w.repository)}</td>
+                  <td>{w.lane}</td>
+                  <td>
+                    <div className="ci-recent-cell">
+                      <RunBlocks sequence={sequence} />
+                      {sequence.length > 0 ? <PatternPill sequence={sequence} /> : null}
+                    </div>
+                  </td>
+                  <td><DailyBlocks rates={w.dailyPassRates} /></td>
+                  <td>{percent(w.passRate)}</td>
+                  <td>{delta(w.delta)}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}
@@ -222,18 +232,21 @@ function CiHealthView() {
   const workflows = pulse?.workflows ?? [];
   const pulseByLane = new Map(workflows.map((w) => [laneKey(w.repository, w.lane), w]));
   const weeklyWorkflows = weekly?.workflows ?? [];
+  const weeklyByLane = new Map(weeklyWorkflows.map((w) => [laneKey(w.repository, w.lane), w]));
   const repoLabel = buildRepoLabeler([
     ...workflows.map((w) => w.repository),
     ...weeklyWorkflows.map((w) => w.repository),
   ]);
 
-  // Build + rank the failing rows: top-tier first, then likely-real, then longest streak.
+  // Build + rank the failing rows: top-tier first, then likely-real, then longest streak. Each row's
+  // blocks/pattern use the richer of the 36h pulse sequence and the wider weekly history.
   const failingRows: FailingRow[] = (pulse?.failingNow ?? [])
     .map((failing) => {
       const lanePulse = pulseByLane.get(laneKey(failing.repository, failing.lane));
+      const weeklyLane = weeklyByLane.get(laneKey(failing.repository, failing.lane));
       const top = isTopTier(lanePulse, failing.section);
       const tone: FailingRow['tone'] = top ? 'top' : failing.likelyReal ? 'danger' : 'warning';
-      return { failing, pulse: lanePulse, top, tone };
+      return { failing, pulse: lanePulse, sequence: pickRunSequence(lanePulse?.sequence ?? [], weeklyLane?.recentRuns), top, tone };
     })
     .sort((a, b) =>
       Number(b.top) - Number(a.top) ||
@@ -265,7 +278,7 @@ function CiHealthView() {
         repoLabel={repoLabel}
       />
 
-      <TrendsDetails weekly={weeklyWorkflows} greenCount={greenCount} repoLabel={repoLabel} />
+      <TrendsDetails weekly={weeklyWorkflows} pulseByLane={pulseByLane} greenCount={greenCount} repoLabel={repoLabel} />
     </div>
   );
 }

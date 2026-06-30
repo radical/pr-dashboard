@@ -83,6 +83,25 @@ export type PatternBadge = {
   tone: 'danger' | 'warning' | 'success' | 'muted';
 };
 
+// Below this many runs in the 36h pulse window a lane is too sparse to classify confidently, so callers
+// should fall back to the wider weekly run history.
+export const SUFFICIENT_RUNS = 5;
+
+// Picks the better run history to classify/visualize a lane: the recent 36h pulse sequence when it has
+// enough samples (it's the most current), else the wider weekly history for sparse low-frequency lanes.
+export function pickRunSequence<T extends { pass: boolean }>(
+  pulseSequence: readonly T[],
+  weeklyRecent: readonly T[] | undefined,
+): readonly T[] {
+  if (pulseSequence.length >= SUFFICIENT_RUNS) {
+    return pulseSequence;
+  }
+  if (weeklyRecent && weeklyRecent.length > pulseSequence.length) {
+    return weeklyRecent;
+  }
+  return pulseSequence;
+}
+
 // Maps a result to the pill label + tone used on the page. Counts are folded into the label so the
 // badge reads as a sentence fragment ("chronic · 7 builds").
 export function describePattern(result: PatternResult): PatternBadge {

@@ -147,5 +147,12 @@ public sealed class CiHealthComputerTests
         // The two recent runs are 24h and 48h ago: the newest day passed, the prior day failed.
         Assert.Equal(1d, ci.DailyPassRates[6], 3);
         Assert.Equal(0d, ci.DailyPassRates[5], 3);
+
+        // RecentRuns is the newest-first run-by-run history (here all 4 decided runs in the 14d fetch),
+        // so sparse lanes still get enough samples to classify a pattern.
+        Assert.Equal(4, ci.RecentRuns.Count);
+        Assert.Equal(1, ci.RecentRuns[0].RunId);
+        Assert.True(ci.RecentRuns[0].Pass);
+        Assert.False(ci.RecentRuns[1].Pass);
     }
 }

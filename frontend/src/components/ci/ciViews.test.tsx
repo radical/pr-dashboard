@@ -70,7 +70,7 @@ function response(overrides: Partial<CiHealthResponse['pulse'] & object>): CiHea
     },
     weekly: {
       workflows: [
-        { repository: 'org/repo', workflow: 'CI', lane: 'CI', section: 'main', alwaysShow: false, passRate: 0.83, priorPassRate: 0.9, delta: -0.07, dailyPassRates: [1, 1, 0.5, 1, 0, 1, 1] },
+        { repository: 'org/repo', workflow: 'CI', lane: 'CI', section: 'main', alwaysShow: false, passRate: 0.83, priorPassRate: 0.9, delta: -0.07, dailyPassRates: [1, 1, 0.5, 1, 0, 1, 1], recentRuns: [] },
       ],
       updatedAt: '2026-06-30T09:00:00Z',
     },
@@ -136,6 +136,30 @@ describe('CiHealthView (Option 2)', () => {
     act(() => root.render(<CiHealthView />));
     expect(container.textContent).toContain('TOP');
     expect(container.textContent).toContain('always-show');
+  });
+
+  it('falls back to the weekly run history to classify a sparse failing lane (caching-safe #2)', () => {
+    // Pulse window has only 2 runs (too few to classify), but the weekly fetch carries a long
+    // newly-red history — the failing-now blocks/pattern should use the richer weekly source.
+    const sparse = response({
+      workflows: [pulseLane({ lane: 'Nightly', section: 'scheduled', alwaysShow: true, sequence: [runRef(false, 2), runRef(false, 1)] })],
+      failingNow: [failing({ lane: 'Nightly', section: 'scheduled', streak: 2 })],
+    });
+    sparse.weekly = {
+      workflows: [
+        {
+          repository: 'org/repo', workflow: 'CI', lane: 'Nightly', section: 'scheduled', alwaysShow: true,
+          passRate: 0.85, priorPassRate: 0.9, delta: -0.05, dailyPassRates: [1, 1, 1, 1, 1, 0, 0],
+          recentRuns: newlyRedSequence,
+        },
+      ],
+      updatedAt: '2026-06-30T09:00:00Z',
+    };
+    mockReturn = baseHook(sparse);
+    act(() => root.render(<CiHealthView />));
+    // The richer weekly history (18 runs) drives the sub-row, not the 2-run pulse sequence.
+    expect(container.querySelectorAll('.ci-subrow .ci-run').length).toBeGreaterThan(10);
+    expect(container.textContent).toContain('newly red');
   });
 });
 
