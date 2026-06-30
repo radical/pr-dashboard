@@ -164,6 +164,11 @@ function BotsView() {
     return bucket && validBuckets.has(bucket) ? (bucket as BotBucketId) : undefined;
   };
   const buckets = bucketBotPrs(botPrs, notes.length > 0 ? overrideBucket : undefined);
+  // The Bots page is for actionable PRs only: ready-to-merge ones already surface on the Review page's
+  // bots lane, and pending ones are just waiting on checks. Show only Stuck + Broken here.
+  const actionableBuckets = buckets.filter((bucket) => bucket.id === 'stuck' || bucket.id === 'broken');
+  const actionableCount = actionableBuckets.reduce((total, bucket) => total + bucket.items.length, 0);
+  const deferredCount = botPrs.length - actionableCount;
 
   const repoLabel = buildRepoLabeler([
     ...botPrs.map((b) => b.repository),
@@ -210,16 +215,22 @@ function BotsView() {
       <WorkQueue items={botShepherd?.workQueue ?? []} repoLabel={repoLabel} ageFor={ageFor} />
 
       <section className="bots-section">
-        <h3>🔀 Bot / automated PRs <span className="ci-muted">({botPrs.length})</span></h3>
-        {botPrs.length === 0 ? (
-          <p className="ci-empty">No open bot/automated PRs.</p>
+        <h3>🔀 Bot PRs needing attention <span className="ci-muted">({actionableCount})</span></h3>
+        {actionableCount === 0 ? (
+          <p className="ci-empty">No bot PRs need attention — nothing stuck or broken.</p>
         ) : (
           <div className="bots-cards">
-            {buckets.map((bucket) => (
+            {actionableBuckets.map((bucket) => (
               <PrBucketCard key={bucket.id} bucket={bucket} notes={notes} repoLabel={repoLabel} />
             ))}
           </div>
         )}
+        {deferredCount > 0 ? (
+          <p className="ci-muted">
+            {deferredCount} ready-to-merge / pending bot PR{deferredCount === 1 ? '' : 's'} —{' '}
+            <a href="?mode=review">see the Review page’s bots lane ↗</a>.
+          </p>
+        ) : null}
       </section>
 
       <section className="bots-section">

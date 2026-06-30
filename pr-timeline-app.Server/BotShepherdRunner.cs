@@ -173,11 +173,18 @@ you MAY use `gh` to look closer at a specific PR/issue, but keep it cheap and do
 
 Produce three things:
 
-1. A prioritized work queue: the few items that need action now, most important first. Mark
-   humanOnly=true when the action is a merge, a servicing/release decision, or an infra step (e.g.
-   mirroring dependencies to internal feeds) — things an agent must not do. Mark humanOnly=false when it
-   is a code change an agent could make (fix a failing required check, resolve a simple conflict).
-   Merge is ALWAYS human.
+1. A prioritized work queue: the items that need action NOW, most important first. This is the page's
+   "Needs attention" list and should mix PRs and issues. Mark humanOnly=true when the action is a merge,
+   a servicing/release decision, or an infra step (e.g. mirroring dependencies to internal feeds) —
+   things an agent must not do. Mark humanOnly=false when it is a change an agent could make (fix a
+   failing required check, resolve a simple conflict, or auto-close/consolidate duplicate issues). Merge
+   is ALWAYS human.
+   - For PRs, ONLY queue actionable ones: failing checks, conflicts, or requested changes. Do NOT queue
+     green-and-mergeable PRs (a human handles those on the review page) or PRs whose checks are still
+     pending.
+   - For issues, queue the ones that need handling now (e.g. a misconfiguration a human must fix, or a
+     pile of duplicates an agent can consolidate and close). Leave purely standing/long-lived issues out
+     of the queue — they belong in issue groups only.
 
 2. A per-PR note for every PR: which bucket it belongs to and a one-line why + action.
    bucket = "easy-win" (green + mergeable, just needs review/merge), "stuck" (conflicting, changes
