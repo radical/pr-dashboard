@@ -1,48 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { CiHealthResponse, WorkflowPulse, WorkflowWeekly } from '../../types';
 import { fetchCiHealth } from '../../utils/ciHealth';
-
-function percent(value: number): string {
-  return `${Math.round(value * 100)}%`;
-}
-
-function delta(value: number): string {
-  return value >= 0 ? `▲ +${percent(value)}` : `▼ ${percent(Math.abs(value))}`;
-}
-
-function relativeTime(iso: string): string {
-  const minutes = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
-}
-
-// Drops the owner prefix ("microsoft/aspire" -> "aspire") for readability, but only when the bare repo
-// name is unique among the repos on screen — so e.g. microsoft/aspire vs CommunityToolkit/Aspire keep
-// their owners and don't collide.
-function buildRepoLabeler(repos: Iterable<string>): (repo: string) => string {
-  const ownersByName = new Map<string, Set<string>>();
-  for (const repo of repos) {
-    const slash = repo.indexOf('/');
-    if (slash < 0) continue;
-    const name = repo.slice(slash + 1).toLowerCase();
-    const owner = repo.slice(0, slash);
-    let owners = ownersByName.get(name);
-    if (!owners) {
-      owners = new Set();
-      ownersByName.set(name, owners);
-    }
-    owners.add(owner);
-  }
-
-  return (repo: string) => {
-    const slash = repo.indexOf('/');
-    if (slash < 0) return repo;
-    const name = repo.slice(slash + 1);
-    return (ownersByName.get(name.toLowerCase())?.size ?? 0) > 1 ? repo : name;
-  };
-}
+import { buildRepoLabeler, delta, percent, relativeTime } from './ciFormat';
 
 // Newest-first sequence rendered oldest -> newest (left to right), each block linking to its run.
 function RecentRuns({ lane }: { lane: WorkflowPulse }) {
@@ -141,8 +100,6 @@ function CiHealthView() {
   const repoLabel = buildRepoLabeler([
     ...(pulse?.workflows ?? []).map((w) => w.repository),
     ...(weekly?.workflows ?? []).map((w) => w.repository),
-    ...(pulse?.botPrs ?? []).map((b) => b.repository),
-    ...(pulse?.botIssues ?? []).map((b) => b.repository),
   ]);
 
   const pulseMain = (pulse?.workflows ?? []).filter((w) => w.section === 'main');
@@ -195,51 +152,6 @@ function CiHealthView() {
       <section className="ci-block">
         <h3>🩺 Scheduled — 7d trend</h3>
         <WeeklyTable lanes={weeklyScheduled} repoLabel={repoLabel} />
-      </section>
-
-      <section className="ci-block">
-        <h3>🤖 Bot / automated PRs</h3>
-        {(pulse?.botPrs.length ?? 0) === 0 ? (
-          <p className="ci-empty">No open bot/automated PRs.</p>
-        ) : (
-          <table className="ci-table">
-            <thead><tr><th>PR</th><th>Title</th><th>Repo</th><th>Author</th><th>CI</th><th>Mergeable</th><th>Review</th></tr></thead>
-            <tbody>
-              {pulse!.botPrs.map((pr) => (
-                <tr key={`${pr.repository}#${pr.number}`}>
-                  <td><a href={pr.htmlUrl} target="_blank" rel="noreferrer">#{pr.number} ↗</a></td>
-                  <td><a href={pr.htmlUrl} target="_blank" rel="noreferrer">{pr.title}</a></td>
-                  <td>{repoLabel(pr.repository)}</td>
-                  <td>{pr.author}</td>
-                  <td>{pr.ciStatus}</td>
-                  <td>{pr.mergeable}</td>
-                  <td>{pr.review.replace('_', ' ')}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
-
-      <section className="ci-block">
-        <h3>📨 Bot / automated issues</h3>
-        {(pulse?.botIssues.length ?? 0) === 0 ? (
-          <p className="ci-empty">No open bot/automated issues.</p>
-        ) : (
-          <table className="ci-table">
-            <thead><tr><th>Issue</th><th>Title</th><th>Repo</th><th>Author</th></tr></thead>
-            <tbody>
-              {pulse!.botIssues.map((issue) => (
-                <tr key={`${issue.repository}#${issue.number}`}>
-                  <td><a href={issue.htmlUrl} target="_blank" rel="noreferrer">#{issue.number} ↗</a></td>
-                  <td><a href={issue.htmlUrl} target="_blank" rel="noreferrer">{issue.title}</a></td>
-                  <td>{repoLabel(issue.repository)}</td>
-                  <td>{issue.author}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
       </section>
     </div>
   );

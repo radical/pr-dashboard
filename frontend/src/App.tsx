@@ -7,6 +7,7 @@ import MobileNav from './components/MobileNav';
 import NotificationSettings from './components/NotificationSettings';
 import DashboardView from './components/dashboard/DashboardView';
 import CiHealthView from './components/ci/CiHealthView';
+import BotsView from './components/ci/BotsView';
 import DetailView from './components/detail/DetailView';
 import {
   defaultRepoInput,
@@ -1152,6 +1153,14 @@ function App() {
               >
                 CI health
               </button>
+              <button
+                type="button"
+                className={dashboardMode === 'bots' ? 'selected' : undefined}
+                aria-pressed={dashboardMode === 'bots'}
+                onClick={() => switchDashboardMode('bots')}
+              >
+                Bots
+              </button>
             </div>
             {dashboardMode === 'ship' && (
               <span className="mode-status ship">Milestone {currentMilestoneLabel}</span>
@@ -1164,7 +1173,9 @@ function App() {
                 ? 'Find the issues that need focused follow-up without mixing them into PR review work.'
                 : dashboardMode === 'ci-health'
                   ? 'GitHub Actions health across the watched repos — daily pulse, weekly trend, and what is on fire.'
-                  : 'Find the pull requests that need attention and keep reviews moving.'}
+                  : dashboardMode === 'bots'
+                    ? 'Open bot/automated PRs and issues across the watched repos, with their CI, mergeable, and review state.'
+                    : 'Find the pull requests that need attention and keep reviews moving.'}
           </p>
         </div>
 
@@ -1183,7 +1194,8 @@ function App() {
 
       <main className={`workspace ${viewMode}`}>
         {viewMode === 'dashboard' && dashboardMode === 'ci-health' && <CiHealthView />}
-        {viewMode === 'dashboard' && dashboardMode !== 'ci-health' && (
+        {viewMode === 'dashboard' && dashboardMode === 'bots' && <BotsView />}
+        {viewMode === 'dashboard' && dashboardMode !== 'ci-health' && dashboardMode !== 'bots' && (
           <DashboardView
             dashboardMode={dashboardMode}
             repo={repo}

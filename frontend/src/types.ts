@@ -17,7 +17,7 @@ export type AuthStatus = {
 
 export type PullState = 'open' | 'closed' | 'all';
 
-export type DashboardMode = 'review' | 'ship' | 'issues' | 'ci-health';
+export type DashboardMode = 'review' | 'ship' | 'issues' | 'ci-health' | 'bots';
 
 export type PullRequestSummary = {
   repository: string;

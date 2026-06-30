@@ -48,6 +48,7 @@ const MODES: { id: DashboardMode; label: string; icon: ReactNode }[] = [
     ),
   },
   { id: 'ci-health', label: 'CI health', icon: <span aria-hidden>🩺</span> },
+  { id: 'bots', label: 'Bots', icon: <span aria-hidden>🤖</span> },
 ];
 
 function HamburgerIcon() {
@@ -67,7 +68,7 @@ function CloseIcon() {
 }
 
 function modeLabel(mode: DashboardMode): string {
-  return mode === 'ship' ? 'Ship' : mode === 'issues' ? 'Issues' : mode === 'ci-health' ? 'CI health' : 'Review';
+  return mode === 'ship' ? 'Ship' : mode === 'issues' ? 'Issues' : mode === 'ci-health' ? 'CI health' : mode === 'bots' ? 'Bots' : 'Review';
 }
 
 function MobileNav({
