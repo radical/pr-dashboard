@@ -1,4 +1,4 @@
-import type { CiTriageItem, CiTriageSnapshot, FailingWorkflow, RunRef, WorkflowPulse, WorkflowWeekly } from '../../types';
+import type { CiTriageItem, FailingWorkflow, RunRef, WorkflowPulse, WorkflowWeekly } from '../../types';
 import { formatAge } from '../../utils/format';
 import { buildRepoLabeler, delta, percent, relativeTime } from './ciFormat';
 import { classifyPattern, describePattern, pickRunSequence } from './ciPattern';
@@ -6,15 +6,6 @@ import { useCiHealth } from './useCiHealth';
 import CiRefreshButton from './CiRefreshButton';
 
 const laneKey = (repository: string, lane: string) => `${repository}\n${lane}`;
-
-// A lane is "top tier" when it's a push-triggered rolling build (main section) or a curated always-show
-// scheduled lane — these dominate the page.
-function isTopTier(pulse: WorkflowPulse | undefined, fallbackSection: string): boolean {
-  if (pulse) {
-    return pulse.section === 'main' || pulse.alwaysShow;
-  }
-  return fallbackSection === 'main';
-}
 
 // Per-run pass/fail blocks, oldest -> newest (left to right), each linking to its run.
 function RunBlocks({ sequence }: { sequence: readonly RunRef[] }) {
@@ -62,6 +53,28 @@ function cadenceLabel(minutes: number): string {
   return minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`;
 }
 
+// Whether a failing lane is something an agent can take the next step on, or needs a human.
+// Derived from the triage verdict: code/test failures (real-failure, flaky) are agent-fixable;
+// infra/runner and external-dependency breaks usually need a human. Returns null when there is
+// no actionable verdict yet (nothing decided, or "no action"), so the row shows no actor glyph.
+function ciActor(verdict: CiTriageItem | undefined): 'agent' | 'human' | null {
+  if (!verdict || !verdict.needsAction) {
+    return null;
+  }
+  return verdict.category === 'real-failure' || verdict.category === 'flaky' ? 'agent' : 'human';
+}
+
+function ActorGlyph({ actor }: { actor: 'agent' | 'human' | null }) {
+  if (!actor) {
+    return <span className="ci-actor ci-muted" title="no owner decided yet">·</span>;
+  }
+  return (
+    <span className="ci-actor" title={actor === 'agent' ? 'agent-actionable' : 'needs a human'}>
+      {actor === 'agent' ? '🤖' : '🧑'}
+    </span>
+  );
+}
+
 // Verdict cell for one failing lane: the model's actionable/not call + reason, recurrence, and suggested
 // action. "Analysing…" until a verdict for this exact run exists (auto-triage fills it in on cadence).
 function VerdictCell({ verdict }: { verdict: CiTriageItem | undefined }) {
@@ -98,79 +111,145 @@ type FailingRow = {
   tone: 'top' | 'danger' | 'warning';
 };
 
-// "Failing now" — one ranked table. Top-tier lanes (push rolling + always-show) are pinned first and
-// brightest; each lane gets a per-run blocks sub-row with a pattern label. Verdicts fill in from triage.
-function FailingNowBlock({
+// One failing lane rendered as a main row + a per-run blocks sub-row. Shared by both the
+// "main builds" and "other broken" cards so they stay visually identical.
+function FailingLaneRows({
+  row,
+  verdict,
+  repoLabel,
+}: {
+  row: FailingRow;
+  verdict: CiTriageItem | undefined;
+  repoLabel: (repo: string) => string;
+}) {
+  const { failing: f, pulse, sequence, top, tone } = row;
+  const descriptor = top
+    ? (pulse?.section === 'main' ? 'push · main' : 'always-show')
+    : (pulse?.alwaysShow ? 'always-show' : pulse?.section === 'scheduled' ? 'scheduled' : null);
+  return (
+    <>
+      <tr className={`ci-fail-row ${tone}`}>
+        <td><ActorGlyph actor={ciActor(verdict)} /></td>
+        <td>{top ? <span className="ci-pill-top">TOP</span> : <span title="red at tip">🔴</span>}</td>
+        <td>
+          <a href={f.lastRunUrl} target="_blank" rel="noreferrer">{f.lane} ↗</a>
+          {descriptor ? <> <span className="ci-muted">{descriptor}</span></> : null}
+        </td>
+        <td>{repoLabel(f.repository)}</td>
+        <td className="ci-muted">
+          {f.streak} build{f.streak === 1 ? '' : 's'} · {formatAge(f.failingSince)}
+          {f.cadenceMinutes ? <> · ~{cadenceLabel(f.cadenceMinutes)}</> : null}
+        </td>
+        <td><VerdictCell verdict={verdict} /></td>
+      </tr>
+      <tr className={`ci-subrow ${tone}`}>
+        <td></td>
+        <td></td>
+        <td colSpan={4}>
+          <div className="ci-subrow-inner">
+            <span className="ci-subrow-lbl">Recent runs</span>
+            <RunBlocks sequence={sequence} />
+            {sequence.length > 0 ? <PatternPill sequence={sequence} /> : null}
+          </div>
+        </td>
+      </tr>
+    </>
+  );
+}
+
+function FailingTable({
   rows,
-  triage,
+  verdictByRun,
+  repoLabel,
+}: {
+  rows: FailingRow[];
+  verdictByRun: Map<number, CiTriageItem>;
+  repoLabel: (repo: string) => string;
+}) {
+  return (
+    <table className="ci-table ci-fail-table">
+      <thead><tr><th></th><th></th><th>Lane</th><th>Repo</th><th>Failing</th><th>Assessment</th></tr></thead>
+      <tbody>
+        {rows.map((row) => (
+          <FailingLaneRows
+            key={`${row.failing.repository}/${row.failing.lane}`}
+            row={row}
+            verdict={verdictByRun.get(row.failing.lastRunId)}
+            repoLabel={repoLabel}
+          />
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+// The headline card: watched main builds (push on the default branch + release/* branches) that
+// are red right now. These gate the branches the team ships from, so they sit at the top and are
+// always shown — including the reassuring empty state when main is green.
+function MainBuildsBlock({
+  rows,
+  verdictByRun,
   triaging,
   triageError,
+  triageUpdatedAt,
+  triageSnapshotError,
   onRun,
   repoLabel,
 }: {
   rows: FailingRow[];
-  triage: CiTriageSnapshot | null;
+  verdictByRun: Map<number, CiTriageItem>;
   triaging: boolean;
   triageError: string | null;
+  triageUpdatedAt: string | null;
+  triageSnapshotError: string | null;
   onRun: () => void;
   repoLabel: (repo: string) => string;
 }) {
-  const verdictByRun = new Map((triage?.items ?? []).map((it) => [it.runId, it]));
-  const topCount = rows.filter((r) => r.top).length;
-
   return (
-    <section className="ci-block">
+    <section className="ci-block ci-block-main">
       <h3>
-        🚨 Failing now <span className="ci-muted">({rows.length})</span>
-        {rows.length > 0 ? (
-          <span className="ci-muted"> · {topCount} top-tier · {rows.length - topCount} other</span>
-        ) : null}
+        🔥 Main builds on fire <span className="ci-muted">({rows.length})</span>
+        <span className="ci-muted ci-block-sub"> · gate main &amp; release/* branches</span>
         <button type="button" className="ci-refresh" onClick={onRun} disabled={triaging}>
           {triaging ? 'Triaging…' : '🤖 Run triage'}
         </button>
       </h3>
       {triageError ? <p className="ci-refresh-error">{triageError}</p> : null}
-      {triage?.error ? <p className="ci-muted">Triage error: {triage.error}</p> : null}
+      {triageSnapshotError ? <p className="ci-muted">Triage error: {triageSnapshotError}</p> : null}
       {rows.length === 0 ? (
-        <p className="ci-empty">No lanes are red at tip. 🎉</p>
+        <p className="ci-empty">All watched main builds are green at tip. 🎉</p>
       ) : (
         <>
-          <table className="ci-table ci-fail-table">
-            <thead><tr><th></th><th>Lane</th><th>Repo</th><th>Failing</th><th>Assessment</th></tr></thead>
-            <tbody>
-              {rows.map(({ failing: f, pulse, sequence, top, tone }) => {
-                const descriptor = top ? (pulse?.section === 'main' ? 'push · main' : 'always-show') : null;
-                return [
-                  <tr key={`${f.repository}/${f.lane}`} className={`ci-fail-row ${tone}`}>
-                    <td>{top ? <span className="ci-pill-top">TOP</span> : <span title="red at tip">🔴</span>}</td>
-                    <td>
-                      <a href={f.lastRunUrl} target="_blank" rel="noreferrer">{f.lane} ↗</a>
-                      {descriptor ? <> <span className="ci-muted">{descriptor}</span></> : null}
-                    </td>
-                    <td>{repoLabel(f.repository)}</td>
-                    <td className="ci-muted">
-                      {f.streak} build{f.streak === 1 ? '' : 's'} · {formatAge(f.failingSince)}
-                      {f.cadenceMinutes ? <> · ~{cadenceLabel(f.cadenceMinutes)}</> : null}
-                    </td>
-                    <td><VerdictCell verdict={verdictByRun.get(f.lastRunId)} /></td>
-                  </tr>,
-                  <tr key={`${f.repository}/${f.lane}/blocks`} className={`ci-subrow ${tone}`}>
-                    <td></td>
-                    <td colSpan={4}>
-                      <div className="ci-subrow-inner">
-                        <span className="ci-subrow-lbl">Recent runs</span>
-                        <RunBlocks sequence={sequence} />
-                        {sequence.length > 0 ? <PatternPill sequence={sequence} /> : null}
-                      </div>
-                    </td>
-                  </tr>,
-                ];
-              })}
-            </tbody>
-          </table>
-          {triage ? <p className="ci-strip-meta">triage {relativeTime(triage.updatedAt)}</p> : null}
+          <FailingTable rows={rows} verdictByRun={verdictByRun} repoLabel={repoLabel} />
+          {triageUpdatedAt ? <p className="ci-strip-meta">triage {relativeTime(triageUpdatedAt)}</p> : null}
         </>
       )}
+    </section>
+  );
+}
+
+// The second card: every other lane red at tip (scheduled jobs, curated always-show runs, etc.).
+// Broken, worth knowing, but not gating a ship branch — so it sits below the main card and is
+// hidden entirely when nothing else is red.
+function OtherBrokenBlock({
+  rows,
+  verdictByRun,
+  repoLabel,
+}: {
+  rows: FailingRow[];
+  verdictByRun: Map<number, CiTriageItem>;
+  repoLabel: (repo: string) => string;
+}) {
+  if (rows.length === 0) {
+    return null;
+  }
+  return (
+    <section className="ci-block">
+      <h3>
+        🟠 Other broken lanes <span className="ci-muted">({rows.length})</span>
+        <span className="ci-muted ci-block-sub"> · scheduled &amp; non-gating workflows</span>
+      </h3>
+      <FailingTable rows={rows} verdictByRun={verdictByRun} repoLabel={repoLabel} />
     </section>
   );
 }
@@ -238,45 +317,51 @@ function CiHealthView() {
     ...weeklyWorkflows.map((w) => w.repository),
   ]);
 
-  // Build + rank the failing rows: top-tier first, then likely-real, then longest streak. Each row's
-  // blocks/pattern use the richer of the 36h pulse sequence and the wider weekly history.
-  const failingRows: FailingRow[] = (pulse?.failingNow ?? [])
+  // Build the failing rows, then split into the watched main builds (push on the default branch
+  // and release/* branches — section "main") and everything else red. Within each card, rank by
+  // likely-real then longest streak. Each row's blocks/pattern use the richer of the 36h pulse
+  // sequence and the wider weekly history.
+  const allFailing: FailingRow[] = (pulse?.failingNow ?? [])
     .map((failing) => {
       const lanePulse = pulseByLane.get(laneKey(failing.repository, failing.lane));
       const weeklyLane = weeklyByLane.get(laneKey(failing.repository, failing.lane));
-      const top = isTopTier(lanePulse, failing.section);
-      const tone: FailingRow['tone'] = top ? 'top' : failing.likelyReal ? 'danger' : 'warning';
-      return { failing, pulse: lanePulse, sequence: pickRunSequence(lanePulse?.sequence ?? [], weeklyLane?.recentRuns), top, tone };
-    })
-    .sort((a, b) =>
-      Number(b.top) - Number(a.top) ||
-      Number(b.failing.likelyReal) - Number(a.failing.likelyReal) ||
-      b.failing.streak - a.failing.streak);
+      const isMain = failing.section === 'main';
+      const tone: FailingRow['tone'] = isMain ? 'top' : failing.likelyReal ? 'danger' : 'warning';
+      return { failing, pulse: lanePulse, sequence: pickRunSequence(lanePulse?.sequence ?? [], weeklyLane?.recentRuns), top: isMain, tone };
+    });
+  const rankFailing = (a: FailingRow, b: FailingRow) =>
+    Number(b.failing.likelyReal) - Number(a.failing.likelyReal) || b.failing.streak - a.failing.streak;
+  const mainRows = allFailing.filter((r) => r.top).sort(rankFailing);
+  const otherRows = allFailing.filter((r) => !r.top).sort(rankFailing);
+  const verdictByRun = new Map((data.triage?.items ?? []).map((it) => [it.runId, it]));
 
   const greenCount = workflows.filter((w) => w.greenAtTip).length;
-  const redCount = failingRows.length;
-  const topRed = failingRows.filter((r) => r.top).length;
+  const redCount = allFailing.length;
 
   return (
     <div className="ci-health">
       <section className="ci-strip">
         <strong>{redCount === 0 ? '🟢 CI: all lanes green at tip' : `🟡 CI: ${redCount} lane${redCount === 1 ? '' : 's'} red at tip`}</strong>
         <span className="ci-strip-meta">
-          {redCount > 0 ? <>{topRed} top-tier · {redCount - topRed} other · </> : null}
+          {redCount > 0 ? <>{mainRows.length} main · {otherRows.length} other · </> : null}
           {pulse ? `pulse ${relativeTime(pulse.updatedAt)}` : 'pulse pending'} ·{' '}
           {weekly ? `weekly ${relativeTime(weekly.updatedAt)}` : 'weekly pending'}
         </span>
         <CiRefreshButton refreshing={refreshing} refreshError={refreshError} onRefresh={refresh} />
       </section>
 
-      <FailingNowBlock
-        rows={failingRows}
-        triage={data.triage}
+      <MainBuildsBlock
+        rows={mainRows}
+        verdictByRun={verdictByRun}
         triaging={triaging}
         triageError={triageError}
+        triageUpdatedAt={data.triage?.updatedAt ?? null}
+        triageSnapshotError={data.triage?.error ?? null}
         onRun={triage}
         repoLabel={repoLabel}
       />
+
+      <OtherBrokenBlock rows={otherRows} verdictByRun={verdictByRun} repoLabel={repoLabel} />
 
       <TrendsDetails weekly={weeklyWorkflows} pulseByLane={pulseByLane} greenCount={greenCount} repoLabel={repoLabel} />
     </div>

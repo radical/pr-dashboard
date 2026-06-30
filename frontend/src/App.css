@@ -4055,6 +4055,14 @@ img.avatar-dot {
 .ci-strip-meta { font-size: 0.8rem; opacity: 0.7; }
 .ci-block { border: 1px solid var(--border, #30363d); border-radius: 8px; padding: 0.75rem 1rem; }
 .ci-block h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }
+/* The headline "Main builds on fire" card sits brightest: a stronger border + accent rail so the
+   eye lands on the builds that gate the ship branches before anything else. */
+.ci-block-main { border-color: var(--accent-strong); box-shadow: inset 3px 0 0 var(--accent-strong); }
+.ci-block-sub { font-weight: 400; }
+/* Agent/human owner glyph for a failing lane (mirrors the Bots page). The neutral dot keeps the
+   column aligned when triage hasn't decided an owner yet. */
+.ci-actor { font-size: 0.95rem; line-height: 1; }
+.ci-fail-table td:first-child { width: 1.4rem; text-align: center; }
 .ci-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .ci-table th, .ci-table td { text-align: left; padding: 0.3rem 0.4rem; border-top: 1px solid var(--border, #30363d); }
 .ci-table th { opacity: 0.7; font-weight: 500; border-top: none; }

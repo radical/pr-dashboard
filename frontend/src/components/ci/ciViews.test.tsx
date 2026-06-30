@@ -109,13 +109,13 @@ afterEach(() => {
   container.remove();
 });
 
-describe('CiHealthView (Option 2)', () => {
-  it('pins a top-tier failing lane with a TOP pill, blocks sub-row, and pattern label', () => {
+describe('CiHealthView (main/other split)', () => {
+  it('puts a watched main build in the Main-builds card with a TOP pill, blocks sub-row, and pattern label', () => {
     mockReturn = baseHook(response({}));
     act(() => root.render(<CiHealthView />));
 
     const text = container.textContent ?? '';
-    expect(text).toContain('Failing now');
+    expect(text).toContain('Main builds on fire');
     expect(text).toContain('TOP');
     expect(text).toContain('push · main');
     expect(text).toContain('Recent runs');
@@ -126,7 +126,7 @@ describe('CiHealthView (Option 2)', () => {
     expect(container.querySelectorAll('details.ci-trends').length).toBe(1);
   });
 
-  it('marks an always-show scheduled lane as top-tier', () => {
+  it('routes an always-show scheduled lane to the Other-broken card without a TOP pill', () => {
     mockReturn = baseHook(
       response({
         workflows: [pulseLane({ lane: 'Outerloop', section: 'scheduled', alwaysShow: true })],
@@ -134,8 +134,12 @@ describe('CiHealthView (Option 2)', () => {
       }),
     );
     act(() => root.render(<CiHealthView />));
-    expect(container.textContent).toContain('TOP');
-    expect(container.textContent).toContain('always-show');
+    const text = container.textContent ?? '';
+    expect(text).toContain('Other broken lanes');
+    expect(text).toContain('always-show');
+    // It is not a watched main build, so no TOP pill and an empty main card.
+    expect(text).not.toContain('TOP');
+    expect(text).toContain('All watched main builds are green at tip.');
   });
 
   it('falls back to the weekly run history to classify a sparse failing lane (caching-safe #2)', () => {
@@ -160,6 +164,32 @@ describe('CiHealthView (Option 2)', () => {
     // The richer weekly history (18 runs) drives the sub-row, not the 2-run pulse sequence.
     expect(container.querySelectorAll('.ci-subrow .ci-run').length).toBeGreaterThan(10);
     expect(container.textContent).toContain('newly red');
+  });
+
+  it('marks a real-failure verdict as agent-actionable and an infra verdict as human', () => {
+    const data = response({
+      workflows: [
+        pulseLane({ lane: 'CI · main', section: 'main' }),
+        pulseLane({ lane: 'CI · release/13.4', section: 'main' }),
+      ],
+      failingNow: [
+        failing({ lane: 'CI · main', lastRunId: 20 }),
+        failing({ lane: 'CI · release/13.4', lastRunId: 30 }),
+      ],
+    });
+    data.triage = {
+      items: [
+        { repository: 'org/repo', workflow: 'CI', lane: 'CI · main', runId: 20, runUrl: 'https://x/run/20', failingSince: '2026-06-30T12:00:00Z', streak: 3, needsAction: true, category: 'real-failure', confidence: 'high', summary: 'test broke', suggestedAction: 'Fix the test', sameRootCauseAsPrevious: false, recurringBuilds: 1, triagedAt: '2026-06-30T12:05:00Z', model: 'x' },
+        { repository: 'org/repo', workflow: 'CI', lane: 'CI · release/13.4', runId: 30, runUrl: 'https://x/run/30', failingSince: '2026-06-30T12:00:00Z', streak: 3, needsAction: true, category: 'infra', confidence: 'high', summary: 'runner died', suggestedAction: 'Stabilise the runner', sameRootCauseAsPrevious: false, recurringBuilds: 1, triagedAt: '2026-06-30T12:05:00Z', model: 'x' },
+      ],
+      updatedAt: '2026-06-30T12:06:00Z',
+      error: null,
+    };
+    mockReturn = baseHook(data);
+    act(() => root.render(<CiHealthView />));
+    const text = container.textContent ?? '';
+    expect(text).toContain('🤖');
+    expect(text).toContain('🧑');
   });
 });
 
