@@ -4064,6 +4064,8 @@ img.avatar-dot {
 .ci-run { display: inline-block; width: 12px; height: 12px; border-radius: 2px; }
 .ci-run-pass { background: #3fb950; }
 .ci-run-fail { background: #f85149; }
+.ci-day-mixed { background: #d29922; }
+.ci-day-empty { background: transparent; border: 1px solid var(--border, #30363d); }
 .ci-run:hover { outline: 1px solid var(--border, #8b949e); }
 .ci-muted { opacity: 0.6; font-size: 0.8em; }
 .ci-toggle { margin-left: 0.6rem; font-size: 0.72rem; font-weight: 500; background: transparent;

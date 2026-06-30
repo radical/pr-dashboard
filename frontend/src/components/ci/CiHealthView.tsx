@@ -30,7 +30,7 @@ function PulseTable({ lanes, weeklyByLane, repoLabel }: { lanes: WorkflowPulse[]
 
   return (
     <table className="ci-table">
-      <thead><tr><th>Tip</th><th>Repo / lane</th><th>Pass</th><th>Δ7d</th><th>Recent</th></tr></thead>
+      <thead><tr><th>Tip</th><th>Repo</th><th>Lane</th><th>Pass</th><th>Δ7d</th><th>Recent</th></tr></thead>
       <tbody>
         {lanes.map((w) => {
           const wk = weeklyByLane.get(`${w.repository}\n${w.lane}`);
@@ -38,7 +38,8 @@ function PulseTable({ lanes, weeklyByLane, repoLabel }: { lanes: WorkflowPulse[]
           return (
             <tr key={`${w.repository}/${w.lane}`}>
               <td title={w.greenAtTip ? 'green at tip' : 'red at tip'}>{w.greenAtTip ? '🟢' : '🔴'}</td>
-              <td>{repoLabel(w.repository)} · {w.lane}</td>
+              <td>{repoLabel(w.repository)}</td>
+              <td>{w.lane}</td>
               <td>{percent(w.passRate)} <span className="ci-muted">({w.passes}/{w.runs})</span></td>
               <td>{d === null ? '—' : delta(d)}</td>
               <td><RecentRuns lane={w} /></td>
@@ -50,6 +51,19 @@ function PulseTable({ lanes, weeklyByLane, repoLabel }: { lanes: WorkflowPulse[]
   );
 }
 
+// Per-day pass-rate blocks for the 7d trend: green when the day was all-green, red when all-red, amber
+// in between, and a faint placeholder for days with no decided runs.
+function DailyBlocks({ rates }: { rates: number[] }) {
+  return (
+    <span className="ci-runs">
+      {rates.map((rate, day) => {
+        const cls = rate < 0 ? 'ci-day-empty' : rate >= 0.999 ? 'ci-run-pass' : rate <= 0.001 ? 'ci-run-fail' : 'ci-day-mixed';
+        return <span key={day} className={`ci-run ${cls}`} title={rate < 0 ? 'no runs' : `${Math.round(rate * 100)}% pass`} />;
+      })}
+    </span>
+  );
+}
+
 function WeeklyTable({ lanes, repoLabel }: { lanes: WorkflowWeekly[]; repoLabel: (repo: string) => string }) {
   if (lanes.length === 0) {
     return <p className="ci-empty">No lanes.</p>;
@@ -57,13 +71,15 @@ function WeeklyTable({ lanes, repoLabel }: { lanes: WorkflowWeekly[]; repoLabel:
 
   return (
     <table className="ci-table">
-      <thead><tr><th>Repo / lane</th><th>7d pass</th><th>vs prior</th></tr></thead>
+      <thead><tr><th>Repo</th><th>Lane</th><th>7d pass</th><th>vs prior</th><th>Daily</th></tr></thead>
       <tbody>
         {lanes.map((w) => (
           <tr key={`${w.repository}/${w.lane}`}>
-            <td>{repoLabel(w.repository)} · {w.lane}</td>
+            <td>{repoLabel(w.repository)}</td>
+            <td>{w.lane}</td>
             <td>{percent(w.passRate)}</td>
             <td>{delta(w.delta)}</td>
+            <td><DailyBlocks rates={w.dailyPassRates} /></td>
           </tr>
         ))}
       </tbody>
@@ -140,12 +156,13 @@ function FailingNowBlock({
       ) : (
         <>
           <table className="ci-table">
-            <thead><tr><th>Repo / lane</th><th>Failing</th><th>Assessment</th></tr></thead>
+            <thead><tr><th>Repo</th><th>Lane</th><th>Failing</th><th>Assessment</th></tr></thead>
             <tbody>
               {failing.map((f) => (
                 <tr key={`${f.repository}/${f.lane}`}>
+                  <td>{repoLabel(f.repository)}</td>
                   <td>
-                    <a href={f.lastRunUrl} target="_blank" rel="noreferrer">{repoLabel(f.repository)} · {f.lane} ↗</a>
+                    <a href={f.lastRunUrl} target="_blank" rel="noreferrer">{f.lane} ↗</a>
                   </td>
                   <td className="ci-muted">
                     {f.streak} build{f.streak === 1 ? '' : 's'} · {formatAge(f.failingSince)}

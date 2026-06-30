@@ -105,7 +105,8 @@ static class CiHealthComputer
                 var dayStart = now - TimeSpan.FromDays(windowDays - day);
                 var dayEnd = dayStart + TimeSpan.FromDays(1);
                 var dayRuns = current.Where(run => run.CreatedAt >= dayStart && run.CreatedAt < dayEnd).ToList();
-                dailyPassRates[day] = PassRate(dayRuns);
+                // -1 marks a day with no decided runs so the UI can render it as empty rather than red.
+                dailyPassRates[day] = dayRuns.Count == 0 ? -1d : PassRate(dayRuns);
             }
 
             weekly.Add(new WorkflowWeekly(

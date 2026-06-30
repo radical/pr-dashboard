@@ -142,5 +142,10 @@ public sealed class CiHealthComputerTests
         Assert.Equal(1.0, ci.PriorPassRate, 3);
         Assert.Equal(-0.5, ci.Delta, 3);
         Assert.Equal(7, ci.DailyPassRates.Count);
+        // Days with no decided runs are -1 (empty), not 0 (which would render as all-red).
+        Assert.Equal(-1d, ci.DailyPassRates[0], 3);
+        // The two recent runs are 24h and 48h ago: the newest day passed, the prior day failed.
+        Assert.Equal(1d, ci.DailyPassRates[6], 3);
+        Assert.Equal(0d, ci.DailyPassRates[5], 3);
     }
 }
