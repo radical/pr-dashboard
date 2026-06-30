@@ -1,30 +1,50 @@
-// Maps a GitHub Actions run to a "lane" using the repo's lane config. A lane is a rolling push build on
-// a tracked branch (e.g. "CI · main", "CI · release/13.4") or the PR validation lane ("CI · PR").
-// Scheduled / feature-branch / dispatch runs return null (dropped). Pure; the producer resolves the
-// effective tracked branches (config or the repo default) before calling Resolve.
+// Maps a GitHub Actions run to a lane and a section using the repo's lane config:
+//   - "main"      : a main-CI workflow running on a tracked push branch (e.g. "CI · main",
+//                   "CI · release/13.4")
+//   - "scheduled" : a schedule-triggered workflow not on the skip list (e.g. "Outerloop Tests · scheduled")
+//   - null        : everything else (PRs, feature-branch pushes, dispatch, skipped scheduled)
+// Pure; the producer resolves the effective tracked branches (config or repo default) first.
 static class WorkflowLane
 {
-    // Returns the lane label for a run, or null when the run isn't part of a tracked lane.
-    public static string? Resolve(
+    public const string MainSection = "main";
+    public const string ScheduledSection = "scheduled";
+
+    public static LaneAssignment? Resolve(
         string workflow,
         string @event,
         string headBranch,
         IReadOnlyCollection<string> branches,
-        bool includePullRequests)
+        IReadOnlyCollection<string> mainWorkflows,
+        IReadOnlyCollection<string> skipScheduled)
     {
-        if (string.Equals(@event, "pull_request", StringComparison.OrdinalIgnoreCase))
+        var clean = CleanName(workflow);
+
+        if (string.Equals(@event, "push", StringComparison.OrdinalIgnoreCase))
         {
-            return includePullRequests ? $"{CleanName(workflow)} \u00b7 PR" : null;
+            if (branches.Any(pattern => MatchesBranch(headBranch, pattern))
+                && (mainWorkflows.Count == 0 || Contains(mainWorkflows, clean) || Contains(mainWorkflows, workflow)))
+            {
+                return new LaneAssignment($"{clean} \u00b7 {headBranch}", MainSection);
+            }
+
+            return null;
         }
 
-        if (string.Equals(@event, "push", StringComparison.OrdinalIgnoreCase)
-            && branches.Any(pattern => MatchesBranch(headBranch, pattern)))
+        if (string.Equals(@event, "schedule", StringComparison.OrdinalIgnoreCase))
         {
-            return $"{CleanName(workflow)} \u00b7 {headBranch}";
+            if (Contains(skipScheduled, clean) || Contains(skipScheduled, workflow))
+            {
+                return null;
+            }
+
+            return new LaneAssignment($"{clean} \u00b7 scheduled", ScheduledSection);
         }
 
         return null;
     }
+
+    private static bool Contains(IReadOnlyCollection<string> set, string value) =>
+        set.Contains(value, StringComparer.OrdinalIgnoreCase);
 
     // Matches a branch against a pattern: "*" matches anything, a trailing "*" is a prefix glob
     // ("release/*" matches "release/13.4"), otherwise an exact (case-insensitive) match.
@@ -72,3 +92,5 @@ static class WorkflowLane
         return name;
     }
 }
+
+record LaneAssignment(string Lane, string Section);

@@ -19,6 +19,7 @@ public sealed class CiHealthComputerTests
             Event: "push")
         {
             Lane = lane,
+            Section = "main",
         };
 
     [Fact]

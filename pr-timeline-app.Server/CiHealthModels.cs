@@ -14,6 +14,8 @@ record WorkflowRun(
     string Event)         // push | pull_request | schedule | ...
 {
     public string Lane { get; init; } = "";
+
+    public string Section { get; init; } = "";
 }
 
 // A workflow definition (id + display name) from the repo's /actions/workflows list.
@@ -25,6 +27,7 @@ record WorkflowPulse(
     string Repository,
     string Workflow,
     string Lane,
+    string Section,
     int Runs,
     int Passes,
     double PassRate,
@@ -36,6 +39,7 @@ record FailingWorkflow(
     string Repository,
     string Workflow,
     string Lane,
+    string Section,
     DateTimeOffset FailingSince,
     int Streak,
     long LastRunId,
@@ -48,12 +52,16 @@ record WorkflowWeekly(
     string Repository,
     string Workflow,
     string Lane,
+    string Section,
     double PassRate,
     double PriorPassRate,
     double Delta,
     IReadOnlyList<double> DailyPassRates);
 
-// An open bot/automated PR with its CI status ("passing" | "failing" | "pending" | "unknown").
+// An open bot/automated PR with its merge-readiness state (mirrors microsoft/aspire#18285):
+//   CiStatus  : "passing" | "failing" | "pending" | "unknown"
+//   Mergeable : "mergeable" | "conflicting" | "unknown"
+//   Review    : "approved" | "changes_requested" | "review_required" | "" (none)
 record BotPullRequest(
     string Repository,
     int Number,
@@ -61,6 +69,8 @@ record BotPullRequest(
     string Author,
     string HtmlUrl,
     string CiStatus,
+    string Mergeable,
+    string Review,
     IReadOnlyList<string> Labels);
 
 // An open issue opened by a tracked bot/automation account.
@@ -81,6 +91,8 @@ record CandidatePullRequest(
     bool AuthorIsBot,
     string HtmlUrl,
     string CiStatus,
+    string Mergeable,
+    string Review,
     IReadOnlyList<string> Labels);
 
 record CiHealthPulseSnapshot(

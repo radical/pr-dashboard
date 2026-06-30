@@ -1,18 +1,70 @@
 import { useEffect, useState } from 'react';
-import type { CiHealthResponse } from '../../types';
+import type { CiHealthResponse, WorkflowPulse, WorkflowWeekly } from '../../types';
 import { fetchCiHealth } from '../../utils/ciHealth';
 
 function percent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
+function delta(value: number): string {
+  return value >= 0 ? `▲ +${percent(value)}` : `▼ ${percent(Math.abs(value))}`;
+}
+
 function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  const minutes = Math.max(0, Math.round((Date.now() - then) / 60000));
+  const minutes = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.round(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.round(hours / 24)}d ago`;
+}
+
+function PulseTable({ lanes, weeklyByLane }: { lanes: WorkflowPulse[]; weeklyByLane: Map<string, WorkflowWeekly> }) {
+  if (lanes.length === 0) {
+    return <p className="ci-empty">No lanes.</p>;
+  }
+
+  return (
+    <table className="ci-table">
+      <thead><tr><th>Tip</th><th>Repo / lane</th><th>Runs</th><th>Pass</th><th>Δ7d</th><th>Recent</th></tr></thead>
+      <tbody>
+        {lanes.map((w) => {
+          const wk = weeklyByLane.get(`${w.repository}\n${w.lane}`);
+          const d = wk ? w.passRate - wk.passRate : null;
+          return (
+            <tr key={`${w.repository}/${w.lane}`}>
+              <td title={w.greenAtTip ? 'green at tip' : 'red at tip'}>{w.greenAtTip ? '🟢' : '🔴'}</td>
+              <td>{w.repository} · {w.lane}</td>
+              <td>{w.runs}</td>
+              <td>{percent(w.passRate)}</td>
+              <td>{d === null ? '—' : delta(d)}</td>
+              <td>{[...w.sequence].slice(0, 30).reverse().map((pass) => (pass ? '🟩' : '🟥')).join('')}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+function WeeklyTable({ lanes }: { lanes: WorkflowWeekly[] }) {
+  if (lanes.length === 0) {
+    return <p className="ci-empty">No lanes.</p>;
+  }
+
+  return (
+    <table className="ci-table">
+      <thead><tr><th>Repo / lane</th><th>7d pass</th><th>vs prior</th></tr></thead>
+      <tbody>
+        {lanes.map((w) => (
+          <tr key={`${w.repository}/${w.lane}`}>
+            <td>{w.repository} · {w.lane}</td>
+            <td>{percent(w.passRate)}</td>
+            <td>{delta(w.delta)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
 }
 
 function CiHealthView() {
@@ -41,12 +93,14 @@ function CiHealthView() {
 
   const { pulse, weekly } = data;
   const redAtTip = pulse?.failingNow.length ?? 0;
-  // Join a pulse lane to its weekly lane (by repo + lane) to show 36h-vs-7d drift.
   const weeklyByLane = new Map((weekly?.workflows ?? []).map((w) => [`${w.repository}\n${w.lane}`, w]));
+  const pulseMain = (pulse?.workflows ?? []).filter((w) => w.section === 'main');
+  const pulseScheduled = (pulse?.workflows ?? []).filter((w) => w.section === 'scheduled');
+  const weeklyMain = (weekly?.workflows ?? []).filter((w) => w.section === 'main');
+  const weeklyScheduled = (weekly?.workflows ?? []).filter((w) => w.section === 'scheduled');
 
   return (
     <div className="ci-health">
-      {/* 1. Status strip */}
       <section className="ci-strip">
         <strong>{redAtTip === 0 ? '🟢 CI: all lanes green at tip' : `🟡 CI: ${redAtTip} lane(s) red at tip`}</strong>
         <span className="ci-strip-meta">
@@ -55,16 +109,13 @@ function CiHealthView() {
         </span>
       </section>
 
-      {/* 2. Failing workflows now */}
       <section className="ci-block">
         <h3>⚠️ Failing lanes now</h3>
         {redAtTip === 0 ? (
           <p className="ci-empty">Nothing on fire.</p>
         ) : (
           <table className="ci-table">
-            <thead>
-              <tr><th>Repo</th><th>Lane</th><th>Streak</th><th>Signal</th><th>Run</th><th /></tr>
-            </thead>
+            <thead><tr><th>Repo</th><th>Lane</th><th>Streak</th><th>Signal</th><th>Run</th><th /></tr></thead>
             <tbody>
               {pulse!.failingNow.map((f) => (
                 <tr key={`${f.repository}/${f.lane}`}>
@@ -81,55 +132,33 @@ function CiHealthView() {
         )}
       </section>
 
-      {/* 3. Daily pulse (36h) */}
       <section className="ci-block">
-        <h3>📈 Daily pulse — 36h pass rate</h3>
-        <table className="ci-table">
-          <thead><tr><th>Tip</th><th>Repo / lane</th><th>Runs</th><th>Pass</th><th>Δ7d</th><th>Recent</th></tr></thead>
-          <tbody>
-            {(pulse?.workflows ?? []).map((w) => {
-              const wk = weeklyByLane.get(`${w.repository}\n${w.lane}`);
-              const delta = wk ? w.passRate - wk.passRate : null;
-              return (
-                <tr key={`${w.repository}/${w.lane}`}>
-                  <td title={w.greenAtTip ? 'green at tip' : 'red at tip'}>{w.greenAtTip ? '🟢' : '🔴'}</td>
-                  <td>{w.repository} · {w.lane}</td>
-                  <td>{w.runs}</td>
-                  <td>{percent(w.passRate)}</td>
-                  <td>{delta === null ? '—' : delta >= 0 ? `▲ +${percent(delta)}` : `▼ ${percent(Math.abs(delta))}`}</td>
-                  <td>{[...w.sequence].slice(0, 30).reverse().map((pass) => (pass ? '🟩' : '🟥')).join('')}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <h3>🌳 Main CI — 36h pass rate</h3>
+        <PulseTable lanes={pulseMain} weeklyByLane={weeklyByLane} />
       </section>
 
-      {/* 4. Weekly health (7d) */}
       <section className="ci-block">
-        <h3>🩺 Weekly health — 7d trend</h3>
-        <table className="ci-table">
-          <thead><tr><th>Repo / lane</th><th>7d pass</th><th>vs prior</th></tr></thead>
-          <tbody>
-            {(weekly?.workflows ?? []).map((w) => (
-              <tr key={`${w.repository}/${w.lane}`}>
-                <td>{w.repository} · {w.lane}</td>
-                <td>{percent(w.passRate)}</td>
-                <td>{w.delta >= 0 ? `▲ +${percent(w.delta)}` : `▼ ${percent(Math.abs(w.delta))}`}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <h3>🗓️ Scheduled — 36h pass rate</h3>
+        <PulseTable lanes={pulseScheduled} weeklyByLane={weeklyByLane} />
       </section>
 
-      {/* 5. Bot / automated PRs */}
+      <section className="ci-block">
+        <h3>🩺 Main CI — 7d trend</h3>
+        <WeeklyTable lanes={weeklyMain} />
+      </section>
+
+      <section className="ci-block">
+        <h3>🩺 Scheduled — 7d trend</h3>
+        <WeeklyTable lanes={weeklyScheduled} />
+      </section>
+
       <section className="ci-block">
         <h3>🤖 Bot / automated PRs</h3>
         {(pulse?.botPrs.length ?? 0) === 0 ? (
           <p className="ci-empty">No open bot/automated PRs.</p>
         ) : (
           <table className="ci-table">
-            <thead><tr><th>PR</th><th>Title</th><th>Repo</th><th>Author</th><th>CI</th></tr></thead>
+            <thead><tr><th>PR</th><th>Title</th><th>Repo</th><th>Author</th><th>CI</th><th>Mergeable</th><th>Review</th></tr></thead>
             <tbody>
               {pulse!.botPrs.map((pr) => (
                 <tr key={`${pr.repository}#${pr.number}`}>
@@ -138,6 +167,8 @@ function CiHealthView() {
                   <td>{pr.repository}</td>
                   <td>{pr.author}</td>
                   <td>{pr.ciStatus}</td>
+                  <td>{pr.mergeable}</td>
+                  <td>{pr.review.replace('_', ' ')}</td>
                 </tr>
               ))}
             </tbody>
@@ -145,7 +176,6 @@ function CiHealthView() {
         )}
       </section>
 
-      {/* 6. Bot / automated issues */}
       <section className="ci-block">
         <h3>📨 Bot / automated issues</h3>
         {(pulse?.botIssues.length ?? 0) === 0 ? (

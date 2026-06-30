@@ -94,9 +94,9 @@ sealed class CiHealthProducer(
                 pulses.AddRange(repoPulses);
                 failing.AddRange(repoFailing);
 
-                // forceRefresh: false — rely on the shared cache; CI health doesn't need fresher data
-                // than the existing cache warmup provides.
-                var openPrs = await gitHub.GetPullRequestsAsync(repository, "open", false, cancellationToken);
+                // GraphQL fetch so bot PRs carry merge-readiness state (mergeable / checks / review).
+                // forceRefresh: false — rely on the shared cache.
+                var openPrs = await gitHub.GetPullRequestsGraphQlAsync(repository, "open", false, cancellationToken);
                 botPrs.AddRange(BotPrClassifier.Classify(ToCandidates(repository, openPrs), config.BotLogins));
 
                 if (config.TrackBotIssues)
@@ -135,7 +135,7 @@ sealed class CiHealthProducer(
                 // /actions/runs ~1000-result ceiling on busy repos (which would zero out the prior
                 // week and fabricate the trend delta).
                 var defaultBranch = await gitHub.GetDefaultBranchAsync(repository, cancellationToken);
-                var definitions = FilterDefinitions(repository, await gitHub.GetWorkflowDefinitionsAsync(repository, cancellationToken));
+                var definitions = await gitHub.GetWorkflowDefinitionsAsync(repository, cancellationToken);
                 // Fetch each workflow's runs concurrently; GitHubClient's internal request throttle
                 // bounds real concurrency. Sequential fetches are too slow on repos with many workflows.
                 var runLists = await Task.WhenAll(
@@ -151,20 +151,7 @@ sealed class CiHealthProducer(
         }
 
         await store.WriteWeeklyAsync(new CiHealthWeeklySnapshot(weekly, now), cancellationToken);
-        logger.LogInformation("CI health weekly written: {Workflows} workflows.", weekly.Count);
-    }
-
-    // When a per-repo workflow allowlist is configured, restrict the definitions we fetch runs for to
-    // that set (by cleaned name); otherwise fetch all of them and let ToLanes apply the lane filter.
-    private IReadOnlyList<WorkflowDefinition> FilterDefinitions(RepositoryName repository, IReadOnlyList<WorkflowDefinition> definitions)
-    {
-        if (!options.Value.Workflows.TryGetValue(repository.ToString(), out var allowed) || allowed.Length == 0)
-        {
-            return definitions;
-        }
-
-        var set = new HashSet<string>(allowed, StringComparer.OrdinalIgnoreCase);
-        return definitions.Where(definition => set.Contains(WorkflowLane.CleanName(definition.Name)) || set.Contains(definition.Name)).ToList();
+        logger.LogInformation("CI health weekly written: {Lanes} lanes.", weekly.Count);
     }
 
     private IEnumerable<RepositoryName> ResolveRepositories()
@@ -182,36 +169,26 @@ sealed class CiHealthProducer(
         }
     }
 
-    // Assigns each run to a lane using the repo's lane config (rolling push branches + optional PR
-    // lane), dropping runs that aren't part of a tracked lane and (when configured) keeping only
-    // allowlisted workflows. Tags the run with its cleaned workflow name and lane label.
+    // Assigns each run to a lane + section using the repo's lane config. Drops runs that aren't part of
+    // a tracked lane (PRs, feature-branch pushes, skipped/other scheduled). Tags the run with its
+    // cleaned workflow name, lane label, and section.
     private IReadOnlyList<WorkflowRun> ToLanes(RepositoryName repository, IReadOnlyList<WorkflowRun> runs, string defaultBranch)
     {
         var laneConfig = options.Value.Lanes.GetValueOrDefault(repository.ToString());
         var branches = laneConfig is { Branches.Length: > 0 } ? laneConfig.Branches : [defaultBranch];
-        var includePullRequests = laneConfig?.PullRequests ?? true;
-
-        options.Value.Workflows.TryGetValue(repository.ToString(), out var allowed);
-        var allowSet = allowed is { Length: > 0 }
-            ? new HashSet<string>(allowed, StringComparer.OrdinalIgnoreCase)
-            : null;
+        var mainWorkflows = laneConfig?.MainWorkflows ?? [];
+        var skipScheduled = laneConfig?.SkipScheduled ?? [];
 
         var result = new List<WorkflowRun>();
         foreach (var run in runs)
         {
-            var lane = WorkflowLane.Resolve(run.Workflow, run.Event, run.HeadBranch, branches, includePullRequests);
-            if (lane is null)
+            var assignment = WorkflowLane.Resolve(run.Workflow, run.Event, run.HeadBranch, branches, mainWorkflows, skipScheduled);
+            if (assignment is null)
             {
                 continue;
             }
 
-            var cleanName = WorkflowLane.CleanName(run.Workflow);
-            if (allowSet is not null && !allowSet.Contains(cleanName) && !allowSet.Contains(run.Workflow))
-            {
-                continue;
-            }
-
-            result.Add(run with { Workflow = cleanName, Lane = lane });
+            result.Add(run with { Workflow = WorkflowLane.CleanName(run.Workflow), Lane = assignment.Lane, Section = assignment.Section });
         }
 
         return result;
@@ -229,6 +206,8 @@ sealed class CiHealthProducer(
                 AuthorIsBot: false, // PullRequestSummary does not expose is_bot; allowlist is the floor.
                 pr.HtmlUrl,
                 MapCiStatus(pr.Checks),
+                MapMergeable(pr.MergeableState),
+                MapReview(pr.Review),
                 pr.Labels))
             .ToList();
 
@@ -238,4 +217,17 @@ sealed class CiHealthProducer(
         : checks.State is "success" ? "passing"
         : checks.State is "unknown" ? "unknown"
         : checks.State;
+
+    private static string MapMergeable(string? mergeableState) =>
+        mergeableState?.ToLowerInvariant() switch
+        {
+            "mergeable" or "clean" or "unstable" or "has_hooks" or "behind" or "blocked" => "mergeable",
+            "conflicting" or "dirty" => "conflicting",
+            _ => "unknown",
+        };
+
+    private static string MapReview(ReviewStatus review) =>
+        review.ApprovalCount > 0 ? "approved"
+        : review.ChangesRequestedCount > 0 ? "changes_requested"
+        : "review_required";
 }

@@ -42,6 +42,7 @@ static class CiHealthComputer
                 group.Repository,
                 group.Workflow,
                 group.Lane,
+                group.Section,
                 decided.Count,
                 passes,
                 (double)passes / decided.Count,
@@ -56,6 +57,7 @@ static class CiHealthComputer
                     group.Repository,
                     group.Workflow,
                     group.Lane,
+                    group.Section,
                     FailingSince: streakRuns[^1].CreatedAt,
                     Streak: streakRuns.Count,
                     LastRunId: decided[0].RunId,
@@ -109,6 +111,7 @@ static class CiHealthComputer
                 group.Repository,
                 group.Workflow,
                 group.Lane,
+                group.Section,
                 passRate,
                 priorPassRate,
                 passRate - priorPassRate,
@@ -121,11 +124,11 @@ static class CiHealthComputer
     private static double PassRate(IReadOnlyCollection<WorkflowRun> runs) =>
         runs.Count == 0 ? 0d : (double)runs.Count(IsPass) / runs.Count;
 
-    // Group by lane (workflow x trigger). Each lane carries a representative cleaned workflow name and
-    // the full lane label, both already set on the runs by the producer.
-    private static IEnumerable<(string Repository, string Workflow, string Lane, List<WorkflowRun> Runs)> GroupByLane(
+    // Group by lane. Each lane carries a representative cleaned workflow name and section, both already
+    // set on the runs by the producer.
+    private static IEnumerable<(string Repository, string Workflow, string Lane, string Section, List<WorkflowRun> Runs)> GroupByLane(
         IReadOnlyList<WorkflowRun> runs) =>
         runs
             .GroupBy(run => (run.Repository, run.Lane))
-            .Select(group => (group.Key.Repository, group.First().Workflow, group.Key.Lane, group.ToList()));
+            .Select(group => (group.Key.Repository, group.First().Workflow, group.Key.Lane, group.First().Section, group.ToList()));
 }

@@ -357,6 +357,7 @@ export type WorkflowPulse = {
   repository: string;
   workflow: string;
   lane: string;
+  section: string;
   runs: number;
   passes: number;
   passRate: number;
@@ -368,6 +369,7 @@ export type FailingWorkflow = {
   repository: string;
   workflow: string;
   lane: string;
+  section: string;
   failingSince: string;
   streak: number;
   lastRunId: number;
@@ -380,6 +382,7 @@ export type WorkflowWeekly = {
   repository: string;
   workflow: string;
   lane: string;
+  section: string;
   passRate: number;
   priorPassRate: number;
   delta: number;
@@ -393,6 +396,8 @@ export type BotPullRequest = {
   author: string;
   htmlUrl: string;
   ciStatus: string;
+  mergeable: string;
+  review: string;
   labels: string[];
 };
 

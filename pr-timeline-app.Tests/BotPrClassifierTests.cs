@@ -17,6 +17,8 @@ public sealed class BotPrClassifierTests
             AuthorIsBot: isBot,
             HtmlUrl: $"https://github.com/microsoft/aspire/pull/{number}",
             CiStatus: "passing",
+            Mergeable: "mergeable",
+            Review: "review_required",
             Labels: labels ?? []);
 
     [Fact]

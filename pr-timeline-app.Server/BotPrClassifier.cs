@@ -61,6 +61,8 @@ static class BotPrClassifier
                 login,
                 pr.HtmlUrl,
                 pr.CiStatus,
+                pr.Mergeable,
+                pr.Review,
                 pr.Labels));
         }
 
