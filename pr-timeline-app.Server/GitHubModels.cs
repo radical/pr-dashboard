@@ -688,6 +688,8 @@ record TimelineItem(
 [JsonSerializable(typeof(GitHubLinkedPullRequestsResponseDto))]
 [JsonSerializable(typeof(GitHubRepositoryDto))]
 [JsonSerializable(typeof(GitHubTimelineItemDto[]))]
+[JsonSerializable(typeof(GitHubWorkflowRunsResponseDto))]
+[JsonSerializable(typeof(GitHubWorkflowRunDto))]
 partial class GitHubJsonSerializerContext : JsonSerializerContext;
 
 sealed class GitHubActorDto
@@ -1308,4 +1310,37 @@ sealed class GitHubTimelineItemDto
     public GitHubTeamDto? RequestedTeam { get; init; }
     public GitHubLabelDto? Label { get; init; }
     public GitHubActorDto? Assignee { get; init; }
+}
+
+sealed class GitHubWorkflowRunsResponseDto
+{
+    [System.Text.Json.Serialization.JsonPropertyName("workflow_runs")]
+    public GitHubWorkflowRunDto[] WorkflowRuns { get; init; } = [];
+}
+
+sealed class GitHubWorkflowRunDto
+{
+    [System.Text.Json.Serialization.JsonPropertyName("id")]
+    public long Id { get; init; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("name")]
+    public string? Name { get; init; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("status")]
+    public string? Status { get; init; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("conclusion")]
+    public string? Conclusion { get; init; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("created_at")]
+    public DateTimeOffset CreatedAt { get; init; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("html_url")]
+    public string? HtmlUrl { get; init; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("head_branch")]
+    public string? HeadBranch { get; init; }
+
+    [System.Text.Json.Serialization.JsonPropertyName("event")]
+    public string? Event { get; init; }
 }

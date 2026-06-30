@@ -519,6 +519,61 @@ sealed partial class GitHubClient(
             cancellationToken);
     }
 
+    // Fetches recent GitHub Actions runs for a repo, newest-first, stopping once runs predate `since`
+    // or a page cap is hit. Uses the public-cache (server) token so it works for logged-out viewers.
+    public async Task<IReadOnlyList<WorkflowRun>> GetWorkflowRunsAsync(
+        RepositoryName repositoryName,
+        DateTimeOffset since,
+        CancellationToken cancellationToken)
+    {
+        const int maxPages = 5;
+        const int perPage = 100;
+        var runs = new List<WorkflowRun>();
+
+        for (var page = 1; page <= maxPages; page++)
+        {
+            var url = $"repos/{repositoryName.Owner}/{repositoryName.Name}/actions/runs?per_page={perPage}&page={page}";
+            using var response = await SendGitHubRequestAsync(url, GitHubRequestAuthorization.PublicCacheToken, cancellationToken);
+            var payload = await ReadGitHubJsonAsync(
+                response,
+                GitHubJsonSerializerContext.Default.GitHubWorkflowRunsResponseDto,
+                cancellationToken);
+
+            if (payload.WorkflowRuns.Length == 0)
+            {
+                break;
+            }
+
+            var reachedOlderThanSince = false;
+            foreach (var dto in payload.WorkflowRuns)
+            {
+                if (dto.CreatedAt < since)
+                {
+                    reachedOlderThanSince = true;
+                    continue;
+                }
+
+                runs.Add(new WorkflowRun(
+                    repositoryName.ToString(),
+                    dto.Name ?? "(unnamed)",
+                    dto.Status ?? "",
+                    dto.Conclusion ?? "",
+                    dto.CreatedAt,
+                    dto.Id,
+                    dto.HtmlUrl ?? "",
+                    dto.HeadBranch ?? "",
+                    dto.Event ?? ""));
+            }
+
+            if (reachedOlderThanSince || payload.WorkflowRuns.Length < perPage)
+            {
+                break;
+            }
+        }
+
+        return runs;
+    }
+
     public async Task<IReadOnlyList<PullRequestSummary>> GetPullRequestsGraphQlAsync(
         RepositoryName repositoryName,
         string state,
