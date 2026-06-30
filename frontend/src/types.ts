@@ -396,10 +396,20 @@ export type BotPullRequest = {
   labels: string[];
 };
 
+export type BotIssue = {
+  repository: string;
+  number: number;
+  title: string;
+  author: string;
+  htmlUrl: string;
+  labels: string[];
+};
+
 export type CiHealthPulseSnapshot = {
   workflows: WorkflowPulse[];
   failingNow: FailingWorkflow[];
   botPrs: BotPullRequest[];
+  botIssues: BotIssue[];
   updatedAt: string;
 };
 

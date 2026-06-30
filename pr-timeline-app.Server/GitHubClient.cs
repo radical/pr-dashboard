@@ -520,7 +520,7 @@ sealed partial class GitHubClient(
     }
 
     // Returns the repository's default branch (e.g. "main"), used to classify push runs into the
-    // "main" lane. One cheap GET /repos/{owner}/{repo} per cycle.
+    // rolling lane. One cheap GET /repos/{owner}/{repo} per cycle.
     public async Task<string> GetDefaultBranchAsync(
         RepositoryName repositoryName,
         CancellationToken cancellationToken)
@@ -532,6 +532,57 @@ sealed partial class GitHubClient(
             GitHubJsonSerializerContext.Default.GitHubRepositoryDto,
             cancellationToken);
         return payload.DefaultBranch ?? "main";
+    }
+
+    // Returns open issues for a repo (pull requests excluded), newest-updated first, as BotIssue
+    // carriers with the raw author login. The caller filters to tracked bots. Uses the public-cache
+    // (server) token so it works for logged-out viewers.
+    public async Task<IReadOnlyList<BotIssue>> GetOpenIssuesAsync(
+        RepositoryName repositoryName,
+        CancellationToken cancellationToken)
+    {
+        const int maxPages = 3;
+        const int perPage = 100;
+        var issues = new List<BotIssue>();
+
+        for (var page = 1; page <= maxPages; page++)
+        {
+            var url = $"repos/{repositoryName.Owner}/{repositoryName.Name}/issues?state=open&sort=updated&per_page={perPage}&page={page}";
+            using var response = await SendGitHubRequestAsync(url, GitHubRequestAuthorization.PublicCacheToken, cancellationToken);
+            var payload = await ReadGitHubJsonAsync(
+                response,
+                GitHubJsonSerializerContext.Default.GitHubIssueDtoArray,
+                cancellationToken);
+
+            if (payload.Length == 0)
+            {
+                break;
+            }
+
+            foreach (var dto in payload)
+            {
+                // The /issues endpoint returns PRs too; PRs carry a `pull_request` object.
+                if (dto.PullRequest is not null)
+                {
+                    continue;
+                }
+
+                issues.Add(new BotIssue(
+                    repositoryName.ToString(),
+                    dto.Number,
+                    dto.Title ?? "",
+                    dto.User?.Login ?? "",
+                    dto.HtmlUrl ?? "",
+                    dto.Labels.Select(label => label.Name ?? "").Where(name => name.Length > 0).ToList()));
+            }
+
+            if (payload.Length < perPage)
+            {
+                break;
+            }
+        }
+
+        return issues;
     }
 
     // Lists a repo's workflow definitions (id + display name). Used by the weekly cycle to fetch runs

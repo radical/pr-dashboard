@@ -1,7 +1,7 @@
 using System.Text.Json.Serialization;
 
-// Normalized GitHub Actions run (one workflow execution) used by the pure computer. Lane/Trigger are
-// filled by the producer once it knows the repo's default branch; until then they default to Other/"".
+// Normalized GitHub Actions run (one workflow execution) used by the pure computer. Lane is filled by
+// the producer once it knows the repo's lane config + default branch; until then it defaults to "".
 record WorkflowRun(
     string Repository,
     string Workflow,
@@ -14,8 +14,6 @@ record WorkflowRun(
     string Event)         // push | pull_request | schedule | ...
 {
     public string Lane { get; init; } = "";
-
-    public LaneTrigger Trigger { get; init; } = LaneTrigger.Other;
 }
 
 // A workflow definition (id + display name) from the repo's /actions/workflows list.
@@ -65,6 +63,15 @@ record BotPullRequest(
     string CiStatus,
     IReadOnlyList<string> Labels);
 
+// An open issue opened by a tracked bot/automation account.
+record BotIssue(
+    string Repository,
+    int Number,
+    string Title,
+    string Author,
+    string HtmlUrl,
+    IReadOnlyList<string> Labels);
+
 // Candidate PR fed to the classifier (decoupled from PullRequestSummary so the classifier is pure).
 record CandidatePullRequest(
     string Repository,
@@ -80,6 +87,7 @@ record CiHealthPulseSnapshot(
     IReadOnlyList<WorkflowPulse> Workflows,
     IReadOnlyList<FailingWorkflow> FailingNow,
     IReadOnlyList<BotPullRequest> BotPrs,
+    IReadOnlyList<BotIssue> BotIssues,
     DateTimeOffset UpdatedAt);
 
 record CiHealthWeeklySnapshot(

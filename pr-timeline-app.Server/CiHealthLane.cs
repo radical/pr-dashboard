@@ -1,33 +1,47 @@
-// Maps a GitHub Actions run to a "lane" — (workflow x trigger) — so that, e.g., ci.yml on push-to-main
-// and ci.yml on pull_request are tracked separately (mirroring the lanes in the real CI pulse). Pure;
-// the default branch is passed in by the producer (one GET /repos/{owner}/{repo} per cycle).
-enum LaneTrigger
-{
-    Main,         // push to the repository's default branch
-    PullRequest,  // pull_request
-    Scheduled,    // schedule
-    Other,        // feature-branch pushes, workflow_dispatch, etc. — dropped (not a health signal)
-}
-
+// Maps a GitHub Actions run to a "lane" using the repo's lane config. A lane is a rolling push build on
+// a tracked branch (e.g. "CI · main", "CI · release/13.4") or the PR validation lane ("CI · PR").
+// Scheduled / feature-branch / dispatch runs return null (dropped). Pure; the producer resolves the
+// effective tracked branches (config or the repo default) before calling Resolve.
 static class WorkflowLane
 {
-    public static LaneTrigger Classify(string @event, string headBranch, string defaultBranch) =>
-        @event switch
-        {
-            "pull_request" => LaneTrigger.PullRequest,
-            "schedule" => LaneTrigger.Scheduled,
-            "push" when string.Equals(headBranch, defaultBranch, StringComparison.OrdinalIgnoreCase)
-                => LaneTrigger.Main,
-            _ => LaneTrigger.Other,
-        };
-
-    public static string Label(LaneTrigger trigger) => trigger switch
+    // Returns the lane label for a run, or null when the run isn't part of a tracked lane.
+    public static string? Resolve(
+        string workflow,
+        string @event,
+        string headBranch,
+        IReadOnlyCollection<string> branches,
+        bool includePullRequests)
     {
-        LaneTrigger.Main => "main",
-        LaneTrigger.PullRequest => "PR",
-        LaneTrigger.Scheduled => "scheduled",
-        _ => "other",
-    };
+        if (string.Equals(@event, "pull_request", StringComparison.OrdinalIgnoreCase))
+        {
+            return includePullRequests ? $"{CleanName(workflow)} \u00b7 PR" : null;
+        }
+
+        if (string.Equals(@event, "push", StringComparison.OrdinalIgnoreCase)
+            && branches.Any(pattern => MatchesBranch(headBranch, pattern)))
+        {
+            return $"{CleanName(workflow)} \u00b7 {headBranch}";
+        }
+
+        return null;
+    }
+
+    // Matches a branch against a pattern: "*" matches anything, a trailing "*" is a prefix glob
+    // ("release/*" matches "release/13.4"), otherwise an exact (case-insensitive) match.
+    public static bool MatchesBranch(string branch, string pattern)
+    {
+        if (pattern == "*")
+        {
+            return true;
+        }
+
+        if (pattern.EndsWith("*", StringComparison.Ordinal))
+        {
+            return branch.StartsWith(pattern[..^1], StringComparison.OrdinalIgnoreCase);
+        }
+
+        return string.Equals(branch, pattern, StringComparison.OrdinalIgnoreCase);
+    }
 
     // Reduce a raw workflow name to a clean display name: drop any leading path, then a trailing
     // .yml/.yaml, then a trailing .lock (GitHub uses the file path as the name when a workflow has no
@@ -57,7 +71,4 @@ static class WorkflowLane
 
         return name;
     }
-
-    public static string LaneLabel(string workflow, LaneTrigger trigger) =>
-        $"{CleanName(workflow)} · {Label(trigger)}";
 }

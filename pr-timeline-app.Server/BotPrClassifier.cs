@@ -81,4 +81,33 @@ static class BotPrClassifier
 
         return login;
     }
+
+    // Filters open issues to those opened by a tracked bot. Mirrors the PR rules where they apply:
+    // normalize the login, keep allowlisted (non-Copilot) authors, and drop the orchestrator's own
+    // "automated"-stamped tracking issues.
+    public static IReadOnlyList<BotIssue> ClassifyIssues(
+        IReadOnlyList<BotIssue> issues,
+        IReadOnlyCollection<string> allowlist)
+    {
+        var allow = new HashSet<string>(allowlist, StringComparer.OrdinalIgnoreCase);
+        var result = new List<BotIssue>();
+
+        foreach (var issue in issues)
+        {
+            var login = NormalizeLogin(issue.Author);
+            if (CopilotApps.Contains(login, StringComparer.OrdinalIgnoreCase) || !allow.Contains(login))
+            {
+                continue;
+            }
+
+            if (issue.Labels.Any(label => string.Equals(label, "automated", StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            result.Add(issue with { Author = login });
+        }
+
+        return result;
+    }
 }

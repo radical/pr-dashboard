@@ -19,17 +19,21 @@ and records a sequenced roadmap for the richer (non-GH-Actions) features.
 
 ## In scope (this branch)
 
-1. **Lane separation by trigger** — split each workflow into lanes:
-   - `main` = `push` to the repo's default branch
-   - `PR` = `pull_request`
-   - `scheduled` = `schedule`
-   - (drop `other`: non-default-branch pushes, `workflow_dispatch`, etc. — not a
-     health signal; replaces today's "push/pull_request only" filter)
+Lanes are **defined per-repo** (config), not auto-derived for every workflow:
+
+1. **Rolling lanes = push builds on tracked branches.** Per-repo `CiHealth:Lanes`
+   config: `Branches` (exact or trailing-`*` glob, e.g. `["main", "release/*"]`)
+   and a `PullRequests` toggle. A push to `release/13.4` → lane
+   `CI · release/13.4`. No `Lanes` entry ⇒ default branch + PR lane.
 2. **Green-at-tip** — per lane, the latest decided run's pass/fail; an overall
    "N lane(s) red at tip" headline.
 3. **Δ vs 7-day** — on the daily pulse, each lane shows `36h rate − 7d rate`.
-4. **Clean lane names** — reduce `.github/workflows/analyze-ci-failure.lock.yml`
-   to `analyze-ci-failure`.
+4. **Clean lane names** — `.github/workflows/analyze-ci-failure.lock.yml` →
+   `analyze-ci-failure`.
+5. **Scheduled lanes dropped by default** (the bulk of the noise).
+6. **Bot tracking** — a global bot-id list (`BotLogins`) drives the bot-PR block
+   and a new bot-**issues** block (`TrackBotIssues`); bot PR/issue rows show the
+   title.
 
 ## Out of scope (roadmap — tracked, not built here)
 

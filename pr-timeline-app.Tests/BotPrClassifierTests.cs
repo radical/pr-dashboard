@@ -114,4 +114,30 @@ public sealed class BotPrClassifierTests
 
         Assert.Empty(BotPrClassifier.Classify(prs, Allowlist));
     }
+
+    private static BotIssue Issue(int number, string login, string[]? labels = null) =>
+        new(
+            Repository: "microsoft/aspire",
+            Number: number,
+            Title: $"issue {number}",
+            Author: login,
+            HtmlUrl: $"https://github.com/microsoft/aspire/issues/{number}",
+            Labels: labels ?? []);
+
+    [Fact]
+    public void ClassifyIssues_KeepsTrackedBotsAndStripsBotSuffix()
+    {
+        var issues = new[]
+        {
+            Issue(1, "github-actions[bot]"),  // tracked bot, [bot] suffix stripped
+            Issue(2, "octocat"),              // human -> dropped
+            Issue(3, "dependabot", labels: ["automated"]), // orchestrator artifact -> dropped
+        };
+
+        var result = BotPrClassifier.ClassifyIssues(issues, Allowlist);
+
+        var bot = Assert.Single(result);
+        Assert.Equal(1, bot.Number);
+        Assert.Equal("github-actions", bot.Author);
+    }
 }

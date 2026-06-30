@@ -78,6 +78,7 @@ sealed class CiHealthProducer(
         var pulses = new List<WorkflowPulse>();
         var failing = new List<FailingWorkflow>();
         var botPrs = new List<BotPullRequest>();
+        var botIssues = new List<BotIssue>();
 
         foreach (var repository in ResolveRepositories())
         {
@@ -97,6 +98,12 @@ sealed class CiHealthProducer(
                 // than the existing cache warmup provides.
                 var openPrs = await gitHub.GetPullRequestsAsync(repository, "open", false, cancellationToken);
                 botPrs.AddRange(BotPrClassifier.Classify(ToCandidates(repository, openPrs), config.BotLogins));
+
+                if (config.TrackBotIssues)
+                {
+                    var openIssues = await gitHub.GetOpenIssuesAsync(repository, cancellationToken);
+                    botIssues.AddRange(BotPrClassifier.ClassifyIssues(openIssues, config.BotLogins));
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -104,9 +111,9 @@ sealed class CiHealthProducer(
             }
         }
 
-        await store.WritePulseAsync(new CiHealthPulseSnapshot(pulses, failing, botPrs, now), cancellationToken);
-        logger.LogInformation("CI health pulse written: {Workflows} workflows, {Failing} failing, {BotPrs} bot PRs.",
-            pulses.Count, failing.Count, botPrs.Count);
+        await store.WritePulseAsync(new CiHealthPulseSnapshot(pulses, failing, botPrs, botIssues, now), cancellationToken);
+        logger.LogInformation("CI health pulse written: {Lanes} lanes, {Failing} failing, {BotPrs} bot PRs, {BotIssues} bot issues.",
+            pulses.Count, failing.Count, botPrs.Count, botIssues.Count);
     }
 
     internal async Task RunWeeklyCycleAsync(CancellationToken cancellationToken)
@@ -175,11 +182,15 @@ sealed class CiHealthProducer(
         }
     }
 
-    // Assigns each run to a lane (workflow x trigger), dropping runs that aren't main-push / PR /
-    // scheduled, and (when configured) keeping only allowlisted workflows. Tags the run with its
-    // cleaned workflow name, trigger, and lane label for the computer to group on.
+    // Assigns each run to a lane using the repo's lane config (rolling push branches + optional PR
+    // lane), dropping runs that aren't part of a tracked lane and (when configured) keeping only
+    // allowlisted workflows. Tags the run with its cleaned workflow name and lane label.
     private IReadOnlyList<WorkflowRun> ToLanes(RepositoryName repository, IReadOnlyList<WorkflowRun> runs, string defaultBranch)
     {
+        var laneConfig = options.Value.Lanes.GetValueOrDefault(repository.ToString());
+        var branches = laneConfig is { Branches.Length: > 0 } ? laneConfig.Branches : [defaultBranch];
+        var includePullRequests = laneConfig?.PullRequests ?? true;
+
         options.Value.Workflows.TryGetValue(repository.ToString(), out var allowed);
         var allowSet = allowed is { Length: > 0 }
             ? new HashSet<string>(allowed, StringComparer.OrdinalIgnoreCase)
@@ -188,8 +199,8 @@ sealed class CiHealthProducer(
         var result = new List<WorkflowRun>();
         foreach (var run in runs)
         {
-            var trigger = WorkflowLane.Classify(run.Event, run.HeadBranch, defaultBranch);
-            if (trigger == LaneTrigger.Other)
+            var lane = WorkflowLane.Resolve(run.Workflow, run.Event, run.HeadBranch, branches, includePullRequests);
+            if (lane is null)
             {
                 continue;
             }
@@ -200,12 +211,7 @@ sealed class CiHealthProducer(
                 continue;
             }
 
-            result.Add(run with
-            {
-                Workflow = cleanName,
-                Trigger = trigger,
-                Lane = WorkflowLane.LaneLabel(run.Workflow, trigger),
-            });
+            result.Add(run with { Workflow = cleanName, Lane = lane });
         }
 
         return result;
