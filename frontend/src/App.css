@@ -4106,3 +4106,47 @@ img.avatar-dot {
 
 .bots-issue-list { list-style: none; margin: 0.4rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
 .bots-issue-list li { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; font-size: 0.85rem; }
+
+/* Failing-now + Bots "needs attention" priority tables: tone-tinted rows with a spanning context/blocks
+   sub-row directly beneath each item (the per-run history / context lives in a row, not a new column). */
+.ci-fail-row td, .bots-row td { border-top: 1px solid var(--border); }
+.ci-fail-row.top td, .ci-subrow.top td { background: rgba(116, 85, 221, 0.12); }
+.ci-fail-row.danger td, .ci-subrow.danger td,
+.bots-row.danger td, .bots-subrow.danger td { background: var(--danger-wash); }
+.ci-fail-row.warning td, .ci-subrow.warning td,
+.bots-row.warning td, .bots-subrow.warning td { background: var(--warning-wash); }
+.bots-row.accent td, .bots-subrow.accent td { background: rgba(116, 85, 221, 0.10); }
+.ci-fail-row.top td:first-child { border-left: 3px solid var(--accent-strong); }
+.ci-fail-row.danger td:first-child, .bots-row.danger td:first-child { border-left: 3px solid var(--danger); }
+.ci-fail-row.warning td:first-child, .bots-row.warning td:first-child { border-left: 3px solid var(--warning); }
+.bots-row.accent td:first-child { border-left: 3px solid var(--accent-strong); }
+
+/* Sub-row: no top border (visually attached to its parent row), tighter bottom padding. */
+.ci-subrow td, .bots-subrow td { border-top: none; padding-top: 0; padding-bottom: 0.5rem; }
+.ci-subrow-inner { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.ci-subrow-lbl { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; opacity: 0.6; }
+
+.bots-title { font-weight: 500; }
+.bots-action { font-size: 0.82rem; }
+
+/* TOP pill for pinned top-tier rolling builds. */
+.ci-pill-top { display: inline-block; font-size: 0.62rem; font-weight: 800; letter-spacing: 0.03em;
+  padding: 1px 6px; border-radius: 999px; color: var(--text);
+  background: var(--accent-wash); border: 1px solid var(--accent-strong); }
+
+/* Pattern pill: characterizes the recent run sequence (newly red / chronic / flaky / recovering). */
+.ci-pat { display: inline-block; font-size: 0.68rem; font-weight: 800; padding: 1px 7px; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--text); white-space: nowrap; }
+.ci-pat.danger { color: var(--danger); background: var(--danger-wash); border-color: var(--danger-border); }
+.ci-pat.warning { color: var(--warning); background: var(--warning-wash); border-color: var(--warning-border); }
+.ci-pat.success { color: var(--success); background: var(--success-wash); border-color: var(--success-border); }
+.ci-pat.muted { color: var(--muted); background: var(--muted-wash); }
+
+/* Merged, de-emphasized trends + the bots "calm" lane: a collapsed details block. */
+.ci-trends { border: 1px solid var(--border); border-radius: 8px; padding: 0.2rem 1rem; }
+.ci-trends > summary { cursor: pointer; font-size: 0.9rem; padding: 0.5rem 0; list-style: none; }
+.ci-trends > summary::-webkit-details-marker { display: none; }
+.ci-trends > summary::before { content: '▸ '; opacity: 0.6; }
+.ci-trends[open] > summary::before { content: '▾ '; }
+.ci-trends .ci-table { margin-top: 0.4rem; }
+.ci-degrading td { font-weight: 600; }

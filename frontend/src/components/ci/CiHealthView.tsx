@@ -1,15 +1,29 @@
-import { useState } from 'react';
 import type { CiTriageItem, CiTriageSnapshot, FailingWorkflow, WorkflowPulse, WorkflowWeekly } from '../../types';
 import { formatAge } from '../../utils/format';
 import { buildRepoLabeler, delta, percent, relativeTime } from './ciFormat';
+import { classifyPattern, describePattern } from './ciPattern';
 import { useCiHealth } from './useCiHealth';
 import CiRefreshButton from './CiRefreshButton';
 
-// Newest-first sequence rendered oldest -> newest (left to right), each block linking to its run.
-function RecentRuns({ lane }: { lane: WorkflowPulse }) {
+const laneKey = (repository: string, lane: string) => `${repository}\n${lane}`;
+
+// A lane is "top tier" when it's a push-triggered rolling build (main section) or a curated always-show
+// scheduled lane — these dominate the page.
+function isTopTier(pulse: WorkflowPulse | undefined, fallbackSection: string): boolean {
+  if (pulse) {
+    return pulse.section === 'main' || pulse.alwaysShow;
+  }
+  return fallbackSection === 'main';
+}
+
+// Per-run pass/fail blocks, oldest -> newest (left to right), each linking to its run.
+function RunBlocks({ sequence }: { sequence: WorkflowPulse['sequence'] }) {
+  if (sequence.length === 0) {
+    return <span className="ci-muted">no recent runs</span>;
+  }
   return (
     <span className="ci-runs">
-      {[...lane.sequence].slice(0, 30).reverse().map((run) => (
+      {[...sequence].slice(0, 24).reverse().map((run) => (
         <a
           key={run.runId}
           className={run.pass ? 'ci-run ci-run-pass' : 'ci-run ci-run-fail'}
@@ -23,32 +37,9 @@ function RecentRuns({ lane }: { lane: WorkflowPulse }) {
   );
 }
 
-function PulseTable({ lanes, weeklyByLane, repoLabel }: { lanes: WorkflowPulse[]; weeklyByLane: Map<string, WorkflowWeekly>; repoLabel: (repo: string) => string }) {
-  if (lanes.length === 0) {
-    return <p className="ci-empty">No lanes.</p>;
-  }
-
-  return (
-    <table className="ci-table">
-      <thead><tr><th>Tip</th><th>Repo</th><th>Lane</th><th>Recent</th><th>Pass</th><th>Δ7d</th></tr></thead>
-      <tbody>
-        {lanes.map((w) => {
-          const wk = weeklyByLane.get(`${w.repository}\n${w.lane}`);
-          const d = wk ? w.passRate - wk.passRate : null;
-          return (
-            <tr key={`${w.repository}/${w.lane}`}>
-              <td title={w.greenAtTip ? 'green at tip' : 'red at tip'}>{w.greenAtTip ? '🟢' : '🔴'}</td>
-              <td>{repoLabel(w.repository)}</td>
-              <td>{w.lane}</td>
-              <td><RecentRuns lane={w} /></td>
-              <td>{percent(w.passRate)} <span className="ci-muted">({w.passes}/{w.runs})</span></td>
-              <td>{d === null ? '—' : delta(d)}</td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
-  );
+function PatternPill({ sequence }: { sequence: WorkflowPulse['sequence'] }) {
+  const badge = describePattern(classifyPattern(sequence));
+  return <span className={`ci-pat ${badge.tone}`}>{badge.label}</span>;
 }
 
 // Per-day pass-rate blocks for the 7d trend: green when the day was all-green, red when all-red, amber
@@ -61,29 +52,6 @@ function DailyBlocks({ rates }: { rates: number[] }) {
         return <span key={day} className={`ci-run ${cls}`} title={rate < 0 ? 'no runs' : `${Math.round(rate * 100)}% pass`} />;
       })}
     </span>
-  );
-}
-
-function WeeklyTable({ lanes, repoLabel }: { lanes: WorkflowWeekly[]; repoLabel: (repo: string) => string }) {
-  if (lanes.length === 0) {
-    return <p className="ci-empty">No lanes.</p>;
-  }
-
-  return (
-    <table className="ci-table">
-      <thead><tr><th>Repo</th><th>Lane</th><th>Daily</th><th>7d pass</th><th>vs prior</th></tr></thead>
-      <tbody>
-        {lanes.map((w) => (
-          <tr key={`${w.repository}/${w.lane}`}>
-            <td>{repoLabel(w.repository)}</td>
-            <td>{w.lane}</td>
-            <td><DailyBlocks rates={w.dailyPassRates} /></td>
-            <td>{percent(w.passRate)}</td>
-            <td>{delta(w.delta)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
   );
 }
 
@@ -122,17 +90,24 @@ function VerdictCell({ verdict }: { verdict: CiTriageItem | undefined }) {
   );
 }
 
-// "Failing now" — every lane whose latest run failed (red at tip), each with its triage verdict inline.
-// The list is always complete; verdicts fill in from auto-triage (or the manual "Run triage").
+type FailingRow = {
+  failing: FailingWorkflow;
+  pulse: WorkflowPulse | undefined;
+  top: boolean;
+  tone: 'top' | 'danger' | 'warning';
+};
+
+// "Failing now" — one ranked table. Top-tier lanes (push rolling + always-show) are pinned first and
+// brightest; each lane gets a per-run blocks sub-row with a pattern label. Verdicts fill in from triage.
 function FailingNowBlock({
-  failing,
+  rows,
   triage,
   triaging,
   triageError,
   onRun,
   repoLabel,
 }: {
-  failing: FailingWorkflow[];
+  rows: FailingRow[];
   triage: CiTriageSnapshot | null;
   triaging: boolean;
   triageError: string | null;
@@ -140,37 +115,57 @@ function FailingNowBlock({
   repoLabel: (repo: string) => string;
 }) {
   const verdictByRun = new Map((triage?.items ?? []).map((it) => [it.runId, it]));
+  const topCount = rows.filter((r) => r.top).length;
 
   return (
     <section className="ci-block">
       <h3>
-        🚨 Failing now <span className="ci-muted">({failing.length})</span>
+        🚨 Failing now <span className="ci-muted">({rows.length})</span>
+        {rows.length > 0 ? (
+          <span className="ci-muted"> · {topCount} top-tier · {rows.length - topCount} other</span>
+        ) : null}
         <button type="button" className="ci-refresh" onClick={onRun} disabled={triaging}>
           {triaging ? 'Triaging…' : '🤖 Run triage'}
         </button>
       </h3>
       {triageError ? <p className="ci-refresh-error">{triageError}</p> : null}
       {triage?.error ? <p className="ci-muted">Triage error: {triage.error}</p> : null}
-      {failing.length === 0 ? (
+      {rows.length === 0 ? (
         <p className="ci-empty">No lanes are red at tip. 🎉</p>
       ) : (
         <>
-          <table className="ci-table">
-            <thead><tr><th>Repo</th><th>Lane</th><th>Failing</th><th>Assessment</th></tr></thead>
+          <table className="ci-table ci-fail-table">
+            <thead><tr><th></th><th>Lane</th><th>Repo</th><th>Failing</th><th>Assessment</th></tr></thead>
             <tbody>
-              {failing.map((f) => (
-                <tr key={`${f.repository}/${f.lane}`}>
-                  <td>{repoLabel(f.repository)}</td>
-                  <td>
-                    <a href={f.lastRunUrl} target="_blank" rel="noreferrer">{f.lane} ↗</a>
-                  </td>
-                  <td className="ci-muted">
-                    {f.streak} build{f.streak === 1 ? '' : 's'} · {formatAge(f.failingSince)}
-                    {f.cadenceMinutes ? <> · ~{cadenceLabel(f.cadenceMinutes)}</> : null}
-                  </td>
-                  <td><VerdictCell verdict={verdictByRun.get(f.lastRunId)} /></td>
-                </tr>
-              ))}
+              {rows.map(({ failing: f, pulse, top, tone }) => {
+                const sequence = pulse?.sequence ?? [];
+                const descriptor = top ? (pulse?.section === 'main' ? 'push · main' : 'always-show') : null;
+                return [
+                  <tr key={`${f.repository}/${f.lane}`} className={`ci-fail-row ${tone}`}>
+                    <td>{top ? <span className="ci-pill-top">TOP</span> : <span title="red at tip">🔴</span>}</td>
+                    <td>
+                      <a href={f.lastRunUrl} target="_blank" rel="noreferrer">{f.lane} ↗</a>
+                      {descriptor ? <> <span className="ci-muted">{descriptor}</span></> : null}
+                    </td>
+                    <td>{repoLabel(f.repository)}</td>
+                    <td className="ci-muted">
+                      {f.streak} build{f.streak === 1 ? '' : 's'} · {formatAge(f.failingSince)}
+                      {f.cadenceMinutes ? <> · ~{cadenceLabel(f.cadenceMinutes)}</> : null}
+                    </td>
+                    <td><VerdictCell verdict={verdictByRun.get(f.lastRunId)} /></td>
+                  </tr>,
+                  <tr key={`${f.repository}/${f.lane}/blocks`} className={`ci-subrow ${tone}`}>
+                    <td></td>
+                    <td colSpan={4}>
+                      <div className="ci-subrow-inner">
+                        <span className="ci-subrow-lbl">Recent runs</span>
+                        <RunBlocks sequence={sequence} />
+                        {sequence.length > 0 ? <PatternPill sequence={sequence} /> : null}
+                      </div>
+                    </td>
+                  </tr>,
+                ];
+              })}
             </tbody>
           </table>
           {triage ? <p className="ci-strip-meta">triage {relativeTime(triage.updatedAt)}</p> : null}
@@ -180,9 +175,40 @@ function FailingNowBlock({
   );
 }
 
+// Merged, de-emphasized "trends & healthy lanes": the old 36h/7d × main/scheduled tables collapse into
+// one details block, summarized in the summary line, with degrading lanes (negative delta) sorted first.
+function TrendsDetails({ weekly, greenCount, repoLabel }: { weekly: WorkflowWeekly[]; greenCount: number; repoLabel: (repo: string) => string }) {
+  const sorted = [...weekly].sort((a, b) => a.delta - b.delta);
+  const avgPass = weekly.length ? weekly.reduce((sum, w) => sum + w.passRate, 0) / weekly.length : 1;
+  return (
+    <details className="ci-trends">
+      <summary>
+        🩺 Trends &amp; healthy lanes <span className="ci-muted">— {greenCount} green at tip · 7d pass {percent(avgPass)}</span>
+      </summary>
+      {sorted.length === 0 ? (
+        <p className="ci-empty">No trend data yet.</p>
+      ) : (
+        <table className="ci-table">
+          <thead><tr><th>Repo</th><th>Lane</th><th>7d daily</th><th>7d pass</th><th>vs prior</th></tr></thead>
+          <tbody>
+            {sorted.map((w) => (
+              <tr key={`${w.repository}/${w.lane}`} className={w.delta < 0 ? 'ci-degrading' : undefined}>
+                <td>{repoLabel(w.repository)}</td>
+                <td>{w.lane}</td>
+                <td><DailyBlocks rates={w.dailyPassRates} /></td>
+                <td>{percent(w.passRate)}</td>
+                <td>{delta(w.delta)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </details>
+  );
+}
+
 function CiHealthView() {
   const { data, error, refreshing, refreshError, refresh, triaging, triageError, triage } = useCiHealth();
-  const [showAllScheduled, setShowAllScheduled] = useState(false);
 
   if (error) {
     return <div className="ci-health-empty">Could not load CI health: {error}</div>;
@@ -193,33 +219,37 @@ function CiHealthView() {
   }
 
   const { pulse, weekly } = data;
-  const redAtTip = (pulse?.workflows ?? []).filter((w) => !w.greenAtTip).length;
-  const weeklyByLane = new Map((weekly?.workflows ?? []).map((w) => [`${w.repository}\n${w.lane}`, w]));
+  const workflows = pulse?.workflows ?? [];
+  const pulseByLane = new Map(workflows.map((w) => [laneKey(w.repository, w.lane), w]));
+  const weeklyWorkflows = weekly?.workflows ?? [];
   const repoLabel = buildRepoLabeler([
-    ...(pulse?.workflows ?? []).map((w) => w.repository),
-    ...(weekly?.workflows ?? []).map((w) => w.repository),
+    ...workflows.map((w) => w.repository),
+    ...weeklyWorkflows.map((w) => w.repository),
   ]);
 
-  const pulseMain = (pulse?.workflows ?? []).filter((w) => w.section === 'main');
-  const allScheduled = (pulse?.workflows ?? []).filter((w) => w.section === 'scheduled');
-  // Always-show lanes first, then those currently failing; the rest hide behind the toggle.
-  const scheduledShown = showAllScheduled
-    ? [...allScheduled].sort((a, b) => Number(b.alwaysShow) - Number(a.alwaysShow))
-    : allScheduled
-        .filter((w) => w.alwaysShow || !w.greenAtTip)
-        .sort((a, b) => Number(b.alwaysShow) - Number(a.alwaysShow));
-  const scheduledHidden = allScheduled.length - scheduledShown.length;
+  // Build + rank the failing rows: top-tier first, then likely-real, then longest streak.
+  const failingRows: FailingRow[] = (pulse?.failingNow ?? [])
+    .map((failing) => {
+      const lanePulse = pulseByLane.get(laneKey(failing.repository, failing.lane));
+      const top = isTopTier(lanePulse, failing.section);
+      const tone: FailingRow['tone'] = top ? 'top' : failing.likelyReal ? 'danger' : 'warning';
+      return { failing, pulse: lanePulse, top, tone };
+    })
+    .sort((a, b) =>
+      Number(b.top) - Number(a.top) ||
+      Number(b.failing.likelyReal) - Number(a.failing.likelyReal) ||
+      b.failing.streak - a.failing.streak);
 
-  const weeklyMain = (weekly?.workflows ?? []).filter((w) => w.section === 'main');
-  const weeklyScheduled = (weekly?.workflows ?? []).filter(
-    (w) => w.section === 'scheduled' && (showAllScheduled || w.alwaysShow || w.passRate < 1),
-  ).sort((a, b) => Number(b.alwaysShow) - Number(a.alwaysShow));
+  const greenCount = workflows.filter((w) => w.greenAtTip).length;
+  const redCount = failingRows.length;
+  const topRed = failingRows.filter((r) => r.top).length;
 
   return (
     <div className="ci-health">
       <section className="ci-strip">
-        <strong>{redAtTip === 0 ? '🟢 CI: all lanes green at tip' : `🟡 CI: ${redAtTip} lane(s) red at tip`}</strong>
+        <strong>{redCount === 0 ? '🟢 CI: all lanes green at tip' : `🟡 CI: ${redCount} lane${redCount === 1 ? '' : 's'} red at tip`}</strong>
         <span className="ci-strip-meta">
+          {redCount > 0 ? <>{topRed} top-tier · {redCount - topRed} other · </> : null}
           {pulse ? `pulse ${relativeTime(pulse.updatedAt)}` : 'pulse pending'} ·{' '}
           {weekly ? `weekly ${relativeTime(weekly.updatedAt)}` : 'weekly pending'}
         </span>
@@ -227,7 +257,7 @@ function CiHealthView() {
       </section>
 
       <FailingNowBlock
-        failing={pulse?.failingNow ?? []}
+        rows={failingRows}
         triage={data.triage}
         triaging={triaging}
         triageError={triageError}
@@ -235,32 +265,7 @@ function CiHealthView() {
         repoLabel={repoLabel}
       />
 
-      <section className="ci-block">
-        <h3>🌳 Main CI — 36h pass rate</h3>
-        <PulseTable lanes={pulseMain} weeklyByLane={weeklyByLane} repoLabel={repoLabel} />
-      </section>
-
-      <section className="ci-block">
-        <h3>
-          🗓️ Scheduled — 36h pass rate
-          {scheduledHidden > 0 || showAllScheduled ? (
-            <button type="button" className="ci-toggle" onClick={() => setShowAllScheduled((v) => !v)}>
-              {showAllScheduled ? 'show only failing' : `show all (+${scheduledHidden} passing)`}
-            </button>
-          ) : null}
-        </h3>
-        <PulseTable lanes={scheduledShown} weeklyByLane={weeklyByLane} repoLabel={repoLabel} />
-      </section>
-
-      <section className="ci-block">
-        <h3>🩺 Main CI — 7d trend</h3>
-        <WeeklyTable lanes={weeklyMain} repoLabel={repoLabel} />
-      </section>
-
-      <section className="ci-block">
-        <h3>🩺 Scheduled — 7d trend</h3>
-        <WeeklyTable lanes={weeklyScheduled} repoLabel={repoLabel} />
-      </section>
+      <TrendsDetails weekly={weeklyWorkflows} greenCount={greenCount} repoLabel={repoLabel} />
     </div>
   );
 }
