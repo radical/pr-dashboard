@@ -27,9 +27,9 @@ public sealed class WorkflowLaneTests
     [Fact]
     public void Resolve_ScheduledMainWorkflow_IsMainSection()
     {
-        // Outerloop is scheduled but configured as a main workflow -> main section.
+        // Outerloop is scheduled but configured as a main workflow -> main section, no trigger suffix.
         var a = WorkflowLane.Resolve("Outerloop Tests", "schedule", "main", Branches, MainWorkflows, NoSkip);
-        Assert.Equal("Outerloop Tests \u00b7 scheduled", a!.Lane);
+        Assert.Equal("Outerloop Tests", a!.Lane);
         Assert.Equal("main", a.Section);
     }
 
@@ -37,7 +37,7 @@ public sealed class WorkflowLaneTests
     public void Resolve_OtherScheduledWorkflow_IsScheduledSection()
     {
         var a = WorkflowLane.Resolve("Quarantined Tests", "schedule", "main", Branches, MainWorkflows, NoSkip);
-        Assert.Equal("Quarantined Tests \u00b7 scheduled", a!.Lane);
+        Assert.Equal("Quarantined Tests", a!.Lane);
         Assert.Equal("scheduled", a.Section);
     }
 

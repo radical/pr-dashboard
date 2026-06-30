@@ -1,9 +1,11 @@
 // Maps a GitHub Actions run to a lane and a section using the repo's lane config:
-//   - "main"      : a configured main workflow (e.g. CI on a tracked push branch, or the scheduled
-//                   outerloop run) -> "CI · main", "CI · release/13.4", "Outerloop Tests · scheduled"
-//   - "scheduled" : any other schedule-triggered workflow not on the skip list
+//   - "main"      : a configured main workflow (e.g. CI on a tracked push branch -> "CI · main",
+//                   "CI · release/13.4"; or a curated scheduled run like "Outerloop Tests")
+//   - "scheduled" : any other schedule-triggered workflow not on the skip list (e.g. "Deployment E2E Tests")
 //   - null        : everything else (PRs, feature-branch pushes, dispatch, skipped scheduled)
-// Pure; the producer resolves the effective tracked branches (config or repo default) first.
+// Push lanes carry a "· {branch}" suffix to distinguish branches; schedule-triggered lanes carry no
+// suffix (the section already conveys the trigger). Pure; the producer resolves the effective tracked
+// branches (config or repo default) first.
 static class WorkflowLane
 {
     public const string MainSection = "main";
@@ -32,7 +34,9 @@ static class WorkflowLane
 
             if (string.Equals(@event, "schedule", StringComparison.OrdinalIgnoreCase))
             {
-                return new LaneAssignment($"{clean} \u00b7 scheduled", MainSection);
+                // Schedule-triggered main lane (e.g. the curated Outerloop run). No trigger suffix: the
+                // Main section already conveys it, and "X · scheduled" under Main CI reads as misplaced.
+                return new LaneAssignment(clean, MainSection);
             }
 
             return null;
@@ -41,7 +45,9 @@ static class WorkflowLane
         if (string.Equals(@event, "schedule", StringComparison.OrdinalIgnoreCase)
             && !Contains(skipScheduled, clean) && !Contains(skipScheduled, workflow))
         {
-            return new LaneAssignment($"{clean} \u00b7 scheduled", ScheduledSection);
+            // No "· scheduled" suffix — every lane in the Scheduled section is schedule-triggered, so it
+            // would be redundant.
+            return new LaneAssignment(clean, ScheduledSection);
         }
 
         return null;

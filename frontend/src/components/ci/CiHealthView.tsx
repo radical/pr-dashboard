@@ -30,7 +30,7 @@ function PulseTable({ lanes, weeklyByLane, repoLabel }: { lanes: WorkflowPulse[]
 
   return (
     <table className="ci-table">
-      <thead><tr><th>Tip</th><th>Repo</th><th>Lane</th><th>Pass</th><th>Δ7d</th><th>Recent</th></tr></thead>
+      <thead><tr><th>Tip</th><th>Repo</th><th>Lane</th><th>Recent</th><th>Pass</th><th>Δ7d</th></tr></thead>
       <tbody>
         {lanes.map((w) => {
           const wk = weeklyByLane.get(`${w.repository}\n${w.lane}`);
@@ -40,9 +40,9 @@ function PulseTable({ lanes, weeklyByLane, repoLabel }: { lanes: WorkflowPulse[]
               <td title={w.greenAtTip ? 'green at tip' : 'red at tip'}>{w.greenAtTip ? '🟢' : '🔴'}</td>
               <td>{repoLabel(w.repository)}</td>
               <td>{w.lane}</td>
+              <td><RecentRuns lane={w} /></td>
               <td>{percent(w.passRate)} <span className="ci-muted">({w.passes}/{w.runs})</span></td>
               <td>{d === null ? '—' : delta(d)}</td>
-              <td><RecentRuns lane={w} /></td>
             </tr>
           );
         })}
@@ -71,15 +71,15 @@ function WeeklyTable({ lanes, repoLabel }: { lanes: WorkflowWeekly[]; repoLabel:
 
   return (
     <table className="ci-table">
-      <thead><tr><th>Repo</th><th>Lane</th><th>7d pass</th><th>vs prior</th><th>Daily</th></tr></thead>
+      <thead><tr><th>Repo</th><th>Lane</th><th>Daily</th><th>7d pass</th><th>vs prior</th></tr></thead>
       <tbody>
         {lanes.map((w) => (
           <tr key={`${w.repository}/${w.lane}`}>
             <td>{repoLabel(w.repository)}</td>
             <td>{w.lane}</td>
+            <td><DailyBlocks rates={w.dailyPassRates} /></td>
             <td>{percent(w.passRate)}</td>
             <td>{delta(w.delta)}</td>
-            <td><DailyBlocks rates={w.dailyPassRates} /></td>
           </tr>
         ))}
       </tbody>
