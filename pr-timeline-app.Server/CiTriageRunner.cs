@@ -65,10 +65,12 @@ sealed class CiTriageRunner(
         }
 
         var batch = toTriage.Take(Math.Max(1, config.MaxLanes)).ToList();
+        var history = await store.ReadTriageHistoryAsync(cancellationToken)
+            ?? new CiTriageHistory(new(), now);
         try
         {
             var result = await copilot.RunAsync(
-                outputPath => BuildPrompt(batch, priorByLane, outputPath),
+                outputPath => BuildPrompt(batch, priorByLane, history, config.HistoryRetentionDays, now, outputPath),
                 cancellationToken);
 
             if (result.TimedOut)
@@ -87,10 +89,8 @@ sealed class CiTriageRunner(
                 return await PersistAsync(reused, now, "Triage output was not valid JSON.", cancellationToken);
             }
 
-            var history = await store.ReadTriageHistoryAsync(cancellationToken)
-                ?? new CiTriageHistory(new(), now);
             var fresh = BuildItems(batch, payload, priorByLane, config.Model, now);
-            AppendHistory(history, fresh, config.HistoryPerLane);
+            AppendHistory(history, fresh, config.HistoryPerLane, config.HistoryRetentionDays, now);
 
             var merged = reused.Concat(fresh).ToList();
             var snapshot = new CiTriageSnapshot(merged, now, null);
@@ -180,8 +180,12 @@ sealed class CiTriageRunner(
         return items;
     }
 
-    private static void AppendHistory(CiTriageHistory history, IReadOnlyList<CiTriageItem> items, int perLane)
+    // Appends fresh verdicts to per-lane history, newest-first, pruned by both age (retentionDays) and a
+    // hard count cap. Internal+static so the pruning is unit-testable.
+    internal static void AppendHistory(
+        CiTriageHistory history, IReadOnlyList<CiTriageItem> items, int perLane, int retentionDays, DateTimeOffset now)
     {
+        var cutoff = now - TimeSpan.FromDays(retentionDays);
         foreach (var item in items)
         {
             var key = LaneKey(item.Repository, item.Lane);
@@ -191,10 +195,11 @@ sealed class CiTriageRunner(
                 history.ByLane[key] = entries;
             }
 
-            // Replace any existing entry for this run id (idempotent), then keep newest-first, bounded.
+            // Replace any existing entry for this run id (idempotent), prepend, then prune by age + count.
             entries.RemoveAll(e => e.RunId == item.RunId);
             entries.Insert(0, new CiTriageHistoryEntry(
-                item.RunId, item.NeedsAction, item.Category, item.Summary, item.RecurringBuilds, item.TriagedAt));
+                item.RunId, item.RunUrl, item.NeedsAction, item.Category, item.Summary, item.RecurringBuilds, item.TriagedAt));
+            entries.RemoveAll(e => e.At < cutoff);
             if (entries.Count > perLane)
             {
                 entries.RemoveRange(perLane, entries.Count - perLane);
@@ -205,8 +210,12 @@ sealed class CiTriageRunner(
     private string BuildPrompt(
         IReadOnlyList<FailingWorkflow> failing,
         IReadOnlyDictionary<string, CiTriageItem> priorByLane,
+        CiTriageHistory history,
+        int retentionDays,
+        DateTimeOffset now,
         string outputPath)
     {
+        var cutoff = now - TimeSpan.FromDays(retentionDays);
         var lanes = new StringBuilder();
         var index = 1;
         foreach (var f in failing)
@@ -219,6 +228,16 @@ sealed class CiTriageRunner(
                 lanes.AppendLine(
                     $"   previousVerdict: category={prior.Category} needsAction={prior.NeedsAction} " +
                     $"recurringBuilds={prior.RecurringBuilds} summary=\"{prior.Summary}\"");
+            }
+            // Compact lookback over the retention window so the model can spot a repeated pattern even
+            // when greens interrupted the streak (e.g. the same infra error 4 times in two weeks).
+            if (history.ByLane.TryGetValue(LaneKey(f.Repository, f.Lane), out var past))
+            {
+                foreach (var e in past.Where(e => e.At >= cutoff && e.RunId != f.LastRunId).Take(8))
+                {
+                    lanes.AppendLine(
+                        $"   past[{e.At:yyyy-MM-dd}]: run={e.RunId} category={e.Category} summary=\"{e.Summary}\" {e.RunUrl}");
+                }
             }
             index++;
         }
@@ -233,9 +252,12 @@ Keep it cheap: look at the failed job/step names and the tail of the failed logs
 A dependabot/automated dependency bump or a transient infra error (registry/network blip, runner
 shortage) usually does NOT need action; a real product/test regression or a broken required check does.
 
-Some items include a `previousVerdict` from the last time this lane was triaged. Compare the current
-failure to it: set sameRootCauseAsPrevious=true ONLY if the current failure has the same root cause
-(e.g. the same network/registry error, the same failing test). Otherwise set it false.
+Some items include a `previousVerdict` (the last triage of this lane) and one or more `past[...]` lines
+(earlier failures of this lane in the retention window, with run id + link). Use them to judge recurrence:
+set sameRootCauseAsPrevious=true ONLY if the current failure has the same root cause as the previous
+verdict (e.g. the same network/registry error, the same failing test). If the same root cause also shows
+up in the older `past[...]` entries, call that out in the summary (e.g. "same ACR outage seen 3x in 2
+weeks") — that signal feeds the issue we open.
 
 When done, write ONE JSON object (and nothing else) to the file:
 {{outputPath}}

@@ -71,7 +71,11 @@ sealed class CiTriageOptions
     public int MaxLanes { get; init; } = 8;
 
     // How many past verdicts to keep per lane for recurrence ("same failure for N builds") + issue context.
-    public int HistoryPerLane { get; init; } = 12;
+    public int HistoryPerLane { get; init; } = 30;
+
+    // Retain per-lane analysis history for this many days so triage can spot repeated patterns across the
+    // window (e.g. "this network failure recurred 4 times in the last 2 weeks"), not just consecutive runs.
+    public int HistoryRetentionDays { get; init; } = 14;
 
     // Hard wall-clock limit for the agentic CLI run; on timeout the process is killed and an error is surfaced.
     public int TimeoutSeconds { get; init; } = 300;

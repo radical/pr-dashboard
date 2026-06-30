@@ -54,9 +54,11 @@ record CiTriageSnapshot(
     string? Error);
 
 // One past verdict for a lane, kept so a later triage can correlate ("same network issue as last time")
-// and so the issue body can say how long a lane has been failing the same way.
+// and so the issue body can say how long a lane has been failing the same way. RunUrl links back to the
+// failing run for that analysis.
 record CiTriageHistoryEntry(
     long RunId,
+    string RunUrl,
     bool NeedsAction,
     string Category,
     string Summary,

@@ -128,4 +128,27 @@ public sealed class CiTriageRunnerTests
 
         Assert.Equal(1, Assert.Single(items).RecurringBuilds); // reset
     }
+
+    [Fact]
+    public void AppendHistory_PrunesByAgeAndCount_AndKeepsRunUrl()
+    {
+        var history = new CiTriageHistory(new(), Now);
+        const string lane = "GH CI — main";
+        var key = $"microsoft/aspire\n{lane}";
+
+        // Seed an old entry (20 days ago) that should be pruned by the 14-day window.
+        history.ByLane[key] = [new CiTriageHistoryEntry(1, "u1", true, "infra", "old", 1, Now.AddDays(-20))];
+
+        var item = new CiTriageItem(
+            "microsoft/aspire", "CI", lane, 2, "https://run/2", Now.AddHours(-1), 1,
+            true, "infra", "high", "fresh", "none", SameRootCauseAsPrevious: false, RecurringBuilds: 1,
+            TriagedAt: Now, Model: "auto");
+
+        CiTriageRunner.AppendHistory(history, [item], perLane: 30, retentionDays: 14, now: Now);
+
+        var entries = history.ByLane[key];
+        var kept = Assert.Single(entries);            // the 20-day-old entry was pruned
+        Assert.Equal(2, kept.RunId);
+        Assert.Equal("https://run/2", kept.RunUrl);   // run link retained for future lookback
+    }
 }
