@@ -75,7 +75,7 @@ export function parseDetailHash(hash: string) {
 
 export function parseDashboardMode(search: string): DashboardMode {
   const mode = new URLSearchParams(search).get('mode')?.toLowerCase();
-  if (mode === 'ship' || mode === 'issues') {
+  if (mode === 'ship' || mode === 'issues' || mode === 'ci-health') {
     return mode;
   }
 

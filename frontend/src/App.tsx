@@ -6,6 +6,7 @@ import AuthCard from './components/AuthCard';
 import MobileNav from './components/MobileNav';
 import NotificationSettings from './components/NotificationSettings';
 import DashboardView from './components/dashboard/DashboardView';
+import CiHealthView from './components/ci/CiHealthView';
 import DetailView from './components/detail/DetailView';
 import {
   defaultRepoInput,
@@ -1143,6 +1144,14 @@ function App() {
               >
                 Ship mode
               </button>
+              <button
+                type="button"
+                className={dashboardMode === 'ci-health' ? 'selected' : undefined}
+                aria-pressed={dashboardMode === 'ci-health'}
+                onClick={() => switchDashboardMode('ci-health')}
+              >
+                CI health
+              </button>
             </div>
             {dashboardMode === 'ship' && (
               <span className="mode-status ship">Milestone {currentMilestoneLabel}</span>
@@ -1153,7 +1162,9 @@ function App() {
               ? 'Only milestone and base-branch work is shown; the normal attention queue is hidden.'
               : dashboardMode === 'issues'
                 ? 'Find the issues that need focused follow-up without mixing them into PR review work.'
-                : 'Find the pull requests that need attention and keep reviews moving.'}
+                : dashboardMode === 'ci-health'
+                  ? 'GitHub Actions health across the watched repos — daily pulse, weekly trend, and what is on fire.'
+                  : 'Find the pull requests that need attention and keep reviews moving.'}
           </p>
         </div>
 
@@ -1171,7 +1182,8 @@ function App() {
       </header>
 
       <main className={`workspace ${viewMode}`}>
-        {viewMode === 'dashboard' && (
+        {viewMode === 'dashboard' && dashboardMode === 'ci-health' && <CiHealthView />}
+        {viewMode === 'dashboard' && dashboardMode !== 'ci-health' && (
           <DashboardView
             dashboardMode={dashboardMode}
             repo={repo}
