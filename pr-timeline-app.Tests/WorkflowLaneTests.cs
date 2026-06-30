@@ -5,14 +5,13 @@ namespace pr_timeline_app.Tests;
 public sealed class WorkflowLaneTests
 {
     private static readonly string[] Branches = ["main", "release/*"];
-    private static readonly string[] MainWorkflows = ["CI"];
+    private static readonly string[] MainWorkflows = ["CI", "Outerloop Tests"];
     private static readonly string[] NoSkip = [];
 
     [Fact]
     public void Resolve_MainWorkflowOnTrackedBranch_IsMainLane()
     {
         var a = WorkflowLane.Resolve("CI", "push", "main", Branches, MainWorkflows, NoSkip);
-        Assert.NotNull(a);
         Assert.Equal("CI \u00b7 main", a!.Lane);
         Assert.Equal("main", a.Section);
     }
@@ -26,38 +25,38 @@ public sealed class WorkflowLaneTests
     }
 
     [Fact]
-    public void Resolve_NonMainWorkflowOnTrackedBranch_IsDropped()
+    public void Resolve_ScheduledMainWorkflow_IsMainSection()
     {
-        // Only the configured main workflow(s) form main lanes.
-        Assert.Null(WorkflowLane.Resolve("Markdownlint", "push", "main", Branches, MainWorkflows, NoSkip));
-    }
-
-    [Fact]
-    public void Resolve_EmptyMainWorkflows_AllowsAnyWorkflowOnTrackedBranch()
-    {
-        var a = WorkflowLane.Resolve("Build and Test", "push", "main", Branches, [], NoSkip);
-        Assert.Equal("Build and Test \u00b7 main", a!.Lane);
+        // Outerloop is scheduled but configured as a main workflow -> main section.
+        var a = WorkflowLane.Resolve("Outerloop Tests", "schedule", "main", Branches, MainWorkflows, NoSkip);
+        Assert.Equal("Outerloop Tests \u00b7 scheduled", a!.Lane);
         Assert.Equal("main", a.Section);
     }
 
     [Fact]
-    public void Resolve_ScheduledWorkflow_IsScheduledLane()
+    public void Resolve_OtherScheduledWorkflow_IsScheduledSection()
     {
-        var a = WorkflowLane.Resolve("Outerloop Tests", "schedule", "main", Branches, MainWorkflows, NoSkip);
-        Assert.Equal("Outerloop Tests \u00b7 scheduled", a!.Lane);
+        var a = WorkflowLane.Resolve("Quarantined Tests", "schedule", "main", Branches, MainWorkflows, NoSkip);
+        Assert.Equal("Quarantined Tests \u00b7 scheduled", a!.Lane);
         Assert.Equal("scheduled", a.Section);
+    }
+
+    [Fact]
+    public void Resolve_NonMainWorkflowOnTrackedBranch_IsDropped()
+    {
+        Assert.Null(WorkflowLane.Resolve("Markdownlint", "push", "main", Branches, MainWorkflows, NoSkip));
     }
 
     [Fact]
     public void Resolve_ScheduledOnSkipList_IsDropped()
     {
-        Assert.Null(WorkflowLane.Resolve("Agentic Maintenance", "schedule", "main", Branches, MainWorkflows, ["Agentic Maintenance"]));
+        Assert.Null(WorkflowLane.Resolve("Noisy Cron", "schedule", "main", Branches, MainWorkflows, ["Noisy Cron"]));
     }
 
     [Theory]
-    [InlineData("pull_request", "feature")]  // PR dropped
-    [InlineData("push", "feature/x")]        // untracked branch dropped
-    [InlineData("workflow_dispatch", "main")] // dispatch dropped
+    [InlineData("pull_request", "feature")]
+    [InlineData("push", "feature/x")]
+    [InlineData("workflow_dispatch", "main")]
     public void Resolve_DropsUntrackedRuns(string @event, string headBranch)
     {
         Assert.Null(WorkflowLane.Resolve("CI", @event, headBranch, Branches, MainWorkflows, NoSkip));
@@ -77,7 +76,8 @@ public sealed class WorkflowLaneTests
     [InlineData(".github/workflows/analyze-ci-failure.lock.yml", "analyze-ci-failure")]
     [InlineData(".github/workflows/ci.yml", "ci")]
     [InlineData("Build and Test", "Build and Test")]
-    public void CleanName_StripsPathAndKnownSuffixes(string raw, string expected)
+    [InlineData("Agentic Maintenance (microsoft/aspire.dev)", "Agentic Maintenance (microsoft/aspire.dev)")]
+    public void CleanName_OnlyStripsActualPaths(string raw, string expected)
     {
         Assert.Equal(expected, WorkflowLane.CleanName(raw));
     }

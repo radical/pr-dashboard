@@ -4060,3 +4060,13 @@ img.avatar-dot {
 .ci-table th { opacity: 0.7; font-weight: 500; border-top: none; }
 .ci-ghost-action { opacity: 0.35; border: 1px solid var(--border, #30363d); border-radius: 5px; padding: 2px 6px; font-size: 0.75rem; }
 .ci-empty, .ci-health-empty { opacity: 0.7; font-size: 0.9rem; }
+.ci-runs { display: inline-flex; gap: 2px; flex-wrap: wrap; }
+.ci-run { display: inline-block; width: 12px; height: 12px; border-radius: 2px; }
+.ci-run-pass { background: #3fb950; }
+.ci-run-fail { background: #f85149; }
+.ci-run:hover { outline: 1px solid var(--border, #8b949e); }
+.ci-muted { opacity: 0.6; font-size: 0.8em; }
+.ci-toggle { margin-left: 0.6rem; font-size: 0.72rem; font-weight: 500; background: transparent;
+  border: 1px solid var(--border, #30363d); border-radius: 5px; padding: 1px 7px; cursor: pointer;
+  color: inherit; opacity: 0.8; }
+.ci-toggle:hover { opacity: 1; }

@@ -18,6 +18,24 @@ function relativeTime(iso: string): string {
   return `${Math.round(hours / 24)}d ago`;
 }
 
+// Newest-first sequence rendered oldest -> newest (left to right), each block linking to its run.
+function RecentRuns({ lane }: { lane: WorkflowPulse }) {
+  return (
+    <span className="ci-runs">
+      {[...lane.sequence].slice(0, 30).reverse().map((run) => (
+        <a
+          key={run.runId}
+          className={run.pass ? 'ci-run ci-run-pass' : 'ci-run ci-run-fail'}
+          href={run.url}
+          target="_blank"
+          rel="noreferrer"
+          title={`run ${run.runId} — ${run.pass ? 'passed' : 'failed'}`}
+        />
+      ))}
+    </span>
+  );
+}
+
 function PulseTable({ lanes, weeklyByLane }: { lanes: WorkflowPulse[]; weeklyByLane: Map<string, WorkflowWeekly> }) {
   if (lanes.length === 0) {
     return <p className="ci-empty">No lanes.</p>;
@@ -25,7 +43,7 @@ function PulseTable({ lanes, weeklyByLane }: { lanes: WorkflowPulse[]; weeklyByL
 
   return (
     <table className="ci-table">
-      <thead><tr><th>Tip</th><th>Repo / lane</th><th>Runs</th><th>Pass</th><th>Δ7d</th><th>Recent</th></tr></thead>
+      <thead><tr><th>Tip</th><th>Repo / lane</th><th>Pass</th><th>Δ7d</th><th>Recent</th></tr></thead>
       <tbody>
         {lanes.map((w) => {
           const wk = weeklyByLane.get(`${w.repository}\n${w.lane}`);
@@ -34,10 +52,9 @@ function PulseTable({ lanes, weeklyByLane }: { lanes: WorkflowPulse[]; weeklyByL
             <tr key={`${w.repository}/${w.lane}`}>
               <td title={w.greenAtTip ? 'green at tip' : 'red at tip'}>{w.greenAtTip ? '🟢' : '🔴'}</td>
               <td>{w.repository} · {w.lane}</td>
-              <td>{w.runs}</td>
-              <td>{percent(w.passRate)}</td>
+              <td>{percent(w.passRate)} <span className="ci-muted">({w.passes}/{w.runs})</span></td>
               <td>{d === null ? '—' : delta(d)}</td>
-              <td>{[...w.sequence].slice(0, 30).reverse().map((pass) => (pass ? '🟩' : '🟥')).join('')}</td>
+              <td><RecentRuns lane={w} /></td>
             </tr>
           );
         })}
@@ -70,6 +87,7 @@ function WeeklyTable({ lanes }: { lanes: WorkflowWeekly[] }) {
 function CiHealthView() {
   const [data, setData] = useState<CiHealthResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showAllScheduled, setShowAllScheduled] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -92,12 +110,23 @@ function CiHealthView() {
   }
 
   const { pulse, weekly } = data;
-  const redAtTip = pulse?.failingNow.length ?? 0;
+  const redAtTip = (pulse?.workflows ?? []).filter((w) => !w.greenAtTip).length;
   const weeklyByLane = new Map((weekly?.workflows ?? []).map((w) => [`${w.repository}\n${w.lane}`, w]));
+
   const pulseMain = (pulse?.workflows ?? []).filter((w) => w.section === 'main');
-  const pulseScheduled = (pulse?.workflows ?? []).filter((w) => w.section === 'scheduled');
+  const allScheduled = (pulse?.workflows ?? []).filter((w) => w.section === 'scheduled');
+  // Always-show lanes first, then those currently failing; the rest hide behind the toggle.
+  const scheduledShown = showAllScheduled
+    ? [...allScheduled].sort((a, b) => Number(b.alwaysShow) - Number(a.alwaysShow))
+    : allScheduled
+        .filter((w) => w.alwaysShow || !w.greenAtTip)
+        .sort((a, b) => Number(b.alwaysShow) - Number(a.alwaysShow));
+  const scheduledHidden = allScheduled.length - scheduledShown.length;
+
   const weeklyMain = (weekly?.workflows ?? []).filter((w) => w.section === 'main');
-  const weeklyScheduled = (weekly?.workflows ?? []).filter((w) => w.section === 'scheduled');
+  const weeklyScheduled = (weekly?.workflows ?? []).filter(
+    (w) => w.section === 'scheduled' && (showAllScheduled || w.alwaysShow || w.passRate < 1),
+  ).sort((a, b) => Number(b.alwaysShow) - Number(a.alwaysShow));
 
   return (
     <div className="ci-health">
@@ -110,36 +139,20 @@ function CiHealthView() {
       </section>
 
       <section className="ci-block">
-        <h3>⚠️ Failing lanes now</h3>
-        {redAtTip === 0 ? (
-          <p className="ci-empty">Nothing on fire.</p>
-        ) : (
-          <table className="ci-table">
-            <thead><tr><th>Repo</th><th>Lane</th><th>Streak</th><th>Signal</th><th>Run</th><th /></tr></thead>
-            <tbody>
-              {pulse!.failingNow.map((f) => (
-                <tr key={`${f.repository}/${f.lane}`}>
-                  <td>{f.repository}</td>
-                  <td>{f.lane}</td>
-                  <td>{f.streak}</td>
-                  <td>{f.likelyReal ? 'likely real' : 'maybe flaky'}</td>
-                  <td><a href={f.lastRunUrl} target="_blank" rel="noreferrer">run ↗</a></td>
-                  <td><span className="ci-ghost-action" title="Coming later">Launch fix · later</span></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
-
-      <section className="ci-block">
         <h3>🌳 Main CI — 36h pass rate</h3>
         <PulseTable lanes={pulseMain} weeklyByLane={weeklyByLane} />
       </section>
 
       <section className="ci-block">
-        <h3>🗓️ Scheduled — 36h pass rate</h3>
-        <PulseTable lanes={pulseScheduled} weeklyByLane={weeklyByLane} />
+        <h3>
+          🗓️ Scheduled — 36h pass rate
+          {scheduledHidden > 0 || showAllScheduled ? (
+            <button type="button" className="ci-toggle" onClick={() => setShowAllScheduled((v) => !v)}>
+              {showAllScheduled ? 'show only failing' : `show all (+${scheduledHidden} passing)`}
+            </button>
+          ) : null}
+        </h3>
+        <PulseTable lanes={scheduledShown} weeklyByLane={weeklyByLane} />
       </section>
 
       <section className="ci-block">

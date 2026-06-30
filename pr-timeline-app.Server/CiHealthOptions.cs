@@ -34,7 +34,8 @@ sealed class CiHealthOptions
 
 sealed class RepoLaneConfig
 {
-    // The repo's "main" CI workflow(s) by (cleaned) name, e.g. ["CI"] for microsoft/aspire's ci.yml.
+    // Workflows (by cleaned name) that belong to the Main CI section, regardless of trigger — e.g.
+    // ["CI", "Outerloop Tests"] for microsoft/aspire (ci.yml on push + the scheduled outerloop run).
     // Empty => every workflow that runs on the tracked branches counts as a main lane.
     public string[] MainWorkflows { get; init; } = [];
 
@@ -42,6 +43,10 @@ sealed class RepoLaneConfig
     // Empty => the repository's default branch.
     public string[] Branches { get; init; } = [];
 
-    // Scheduled workflows (by cleaned name) to hide from the scheduled section.
+    // Scheduled workflows (by cleaned name) that the UI always shows first (not collapsed behind the
+    // "show all" toggle), e.g. ["Quarantined Tests", "Deployment E2E Tests"].
+    public string[] AlwaysShowScheduled { get; init; } = [];
+
+    // Scheduled workflows (by cleaned name) to hide entirely from the scheduled section.
     public string[] SkipScheduled { get; init; } = [];
 }

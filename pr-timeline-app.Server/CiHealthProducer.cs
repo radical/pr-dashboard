@@ -171,13 +171,14 @@ sealed class CiHealthProducer(
 
     // Assigns each run to a lane + section using the repo's lane config. Drops runs that aren't part of
     // a tracked lane (PRs, feature-branch pushes, skipped/other scheduled). Tags the run with its
-    // cleaned workflow name, lane label, and section.
+    // cleaned workflow name, lane label, section, and always-show flag.
     private IReadOnlyList<WorkflowRun> ToLanes(RepositoryName repository, IReadOnlyList<WorkflowRun> runs, string defaultBranch)
     {
         var laneConfig = options.Value.Lanes.GetValueOrDefault(repository.ToString());
         var branches = laneConfig is { Branches.Length: > 0 } ? laneConfig.Branches : [defaultBranch];
         var mainWorkflows = laneConfig?.MainWorkflows ?? [];
         var skipScheduled = laneConfig?.SkipScheduled ?? [];
+        var alwaysShow = new HashSet<string>(laneConfig?.AlwaysShowScheduled ?? [], StringComparer.OrdinalIgnoreCase);
 
         var result = new List<WorkflowRun>();
         foreach (var run in runs)
@@ -188,7 +189,15 @@ sealed class CiHealthProducer(
                 continue;
             }
 
-            result.Add(run with { Workflow = WorkflowLane.CleanName(run.Workflow), Lane = assignment.Lane, Section = assignment.Section });
+            var clean = WorkflowLane.CleanName(run.Workflow);
+            result.Add(run with
+            {
+                Workflow = clean,
+                Lane = assignment.Lane,
+                Section = assignment.Section,
+                AlwaysShow = assignment.Section == WorkflowLane.ScheduledSection
+                    && (alwaysShow.Contains(clean) || alwaysShow.Contains(run.Workflow)),
+            });
         }
 
         return result;

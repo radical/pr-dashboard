@@ -16,23 +16,30 @@ record WorkflowRun(
     public string Lane { get; init; } = "";
 
     public string Section { get; init; } = "";
+
+    public bool AlwaysShow { get; init; }
 }
 
 // A workflow definition (id + display name) from the repo's /actions/workflows list.
 record WorkflowDefinition(long Id, string Name);
 
-// 36h pulse for one lane: pass rate, the most-recent run-by-run sequence (true = pass), and whether the
-// latest decided run passed (green-at-tip, distinct from the window pass rate).
+// One run in a lane's recent sequence: pass/fail plus a link to the run.
+record RunRef(bool Pass, long RunId, string Url);
+
+// 36h pulse for one lane: pass rate, the most-recent run-by-run sequence (newest first), and whether
+// the latest decided run passed (green-at-tip, distinct from the window pass rate). AlwaysShow marks a
+// scheduled lane the UI should keep visible rather than collapse behind "show all".
 record WorkflowPulse(
     string Repository,
     string Workflow,
     string Lane,
     string Section,
+    bool AlwaysShow,
     int Runs,
     int Passes,
     double PassRate,
     bool GreenAtTip,
-    IReadOnlyList<bool> Sequence);
+    IReadOnlyList<RunRef> Sequence);
 
 // A lane currently red at tip. LinkedIssue is reserved for the future reaction engine (null in v1).
 record FailingWorkflow(
@@ -53,6 +60,7 @@ record WorkflowWeekly(
     string Workflow,
     string Lane,
     string Section,
+    bool AlwaysShow,
     double PassRate,
     double PriorPassRate,
     double Delta,

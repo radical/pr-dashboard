@@ -353,16 +353,23 @@ export type TimelineStoryEntry =
     count: number;
   };
 
+export type RunRef = {
+  pass: boolean;
+  runId: number;
+  url: string;
+};
+
 export type WorkflowPulse = {
   repository: string;
   workflow: string;
   lane: string;
   section: string;
+  alwaysShow: boolean;
   runs: number;
   passes: number;
   passRate: number;
   greenAtTip: boolean;
-  sequence: boolean[];
+  sequence: RunRef[];
 };
 
 export type FailingWorkflow = {
@@ -383,6 +390,7 @@ export type WorkflowWeekly = {
   workflow: string;
   lane: string;
   section: string;
+  alwaysShow: boolean;
   passRate: number;
   priorPassRate: number;
   delta: number;

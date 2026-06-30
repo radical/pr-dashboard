@@ -1,7 +1,7 @@
 // Maps a GitHub Actions run to a lane and a section using the repo's lane config:
-//   - "main"      : a main-CI workflow running on a tracked push branch (e.g. "CI · main",
-//                   "CI · release/13.4")
-//   - "scheduled" : a schedule-triggered workflow not on the skip list (e.g. "Outerloop Tests · scheduled")
+//   - "main"      : a configured main workflow (e.g. CI on a tracked push branch, or the scheduled
+//                   outerloop run) -> "CI · main", "CI · release/13.4", "Outerloop Tests · scheduled"
+//   - "scheduled" : any other schedule-triggered workflow not on the skip list
 //   - null        : everything else (PRs, feature-branch pushes, dispatch, skipped scheduled)
 // Pure; the producer resolves the effective tracked branches (config or repo default) first.
 static class WorkflowLane
@@ -18,25 +18,29 @@ static class WorkflowLane
         IReadOnlyCollection<string> skipScheduled)
     {
         var clean = CleanName(workflow);
+        // Empty MainWorkflows => any workflow on a tracked branch is a main lane.
+        var isMain = mainWorkflows.Count == 0 || Contains(mainWorkflows, clean) || Contains(mainWorkflows, workflow);
 
-        if (string.Equals(@event, "push", StringComparison.OrdinalIgnoreCase))
+        if (isMain)
         {
-            if (branches.Any(pattern => MatchesBranch(headBranch, pattern))
-                && (mainWorkflows.Count == 0 || Contains(mainWorkflows, clean) || Contains(mainWorkflows, workflow)))
+            if (string.Equals(@event, "push", StringComparison.OrdinalIgnoreCase))
             {
-                return new LaneAssignment($"{clean} \u00b7 {headBranch}", MainSection);
+                return branches.Any(pattern => MatchesBranch(headBranch, pattern))
+                    ? new LaneAssignment($"{clean} \u00b7 {headBranch}", MainSection)
+                    : null;
+            }
+
+            if (string.Equals(@event, "schedule", StringComparison.OrdinalIgnoreCase))
+            {
+                return new LaneAssignment($"{clean} \u00b7 scheduled", MainSection);
             }
 
             return null;
         }
 
-        if (string.Equals(@event, "schedule", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(@event, "schedule", StringComparison.OrdinalIgnoreCase)
+            && !Contains(skipScheduled, clean) && !Contains(skipScheduled, workflow))
         {
-            if (Contains(skipScheduled, clean) || Contains(skipScheduled, workflow))
-            {
-                return null;
-            }
-
             return new LaneAssignment($"{clean} \u00b7 scheduled", ScheduledSection);
         }
 
@@ -63,11 +67,19 @@ static class WorkflowLane
         return string.Equals(branch, pattern, StringComparison.OrdinalIgnoreCase);
     }
 
-    // Reduce a raw workflow name to a clean display name: drop any leading path, then a trailing
-    // .yml/.yaml, then a trailing .lock (GitHub uses the file path as the name when a workflow has no
-    // `name:` field, e.g. ".github/workflows/analyze-ci-failure.lock.yml" -> "analyze-ci-failure").
+    // Reduce a raw workflow name to a clean display name. GitHub only uses the file PATH as the name
+    // when a workflow has no `name:` field, and such a path always ends in .yml/.yaml — so only then do
+    // we strip the directory + extension (+ a trailing .lock). A real `name:` is left untouched, even
+    // when it legitimately contains '/' (e.g. "Agentic Maintenance (microsoft/aspire.dev)").
     public static string CleanName(string workflow)
     {
+        var isPath = workflow.EndsWith(".yml", StringComparison.OrdinalIgnoreCase)
+            || workflow.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase);
+        if (!isPath)
+        {
+            return workflow;
+        }
+
         var name = workflow;
         var slash = name.LastIndexOf('/');
         if (slash >= 0)

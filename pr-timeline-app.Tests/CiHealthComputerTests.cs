@@ -41,7 +41,7 @@ public sealed class CiHealthComputerTests
         Assert.Equal(2, ci.Passes);
         Assert.Equal(2d / 3d, ci.PassRate, 3);
         // Sequence is newest-first: success(1h), failure(2h), success(3h)
-        Assert.Equal(new[] { true, false, true }, ci.Sequence);
+        Assert.Equal(new[] { true, false, true }, ci.Sequence.Select(r => r.Pass).ToArray());
         Assert.Equal("ci · main", ci.Lane);
         Assert.True(ci.GreenAtTip);                 // newest decided run (1h) passed
     }

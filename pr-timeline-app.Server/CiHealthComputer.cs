@@ -43,11 +43,12 @@ static class CiHealthComputer
                 group.Workflow,
                 group.Lane,
                 group.Section,
+                group.AlwaysShow,
                 decided.Count,
                 passes,
                 (double)passes / decided.Count,
                 GreenAtTip: IsPass(decided[0]),
-                decided.Select(IsPass).ToList()));
+                decided.Select(run => new RunRef(IsPass(run), run.RunId, run.HtmlUrl)).ToList()));
 
             // Failing-now: only when the most recent decided run failed.
             if (IsFail(decided[0]))
@@ -112,6 +113,7 @@ static class CiHealthComputer
                 group.Workflow,
                 group.Lane,
                 group.Section,
+                group.AlwaysShow,
                 passRate,
                 priorPassRate,
                 passRate - priorPassRate,
@@ -124,11 +126,11 @@ static class CiHealthComputer
     private static double PassRate(IReadOnlyCollection<WorkflowRun> runs) =>
         runs.Count == 0 ? 0d : (double)runs.Count(IsPass) / runs.Count;
 
-    // Group by lane. Each lane carries a representative cleaned workflow name and section, both already
-    // set on the runs by the producer.
-    private static IEnumerable<(string Repository, string Workflow, string Lane, string Section, List<WorkflowRun> Runs)> GroupByLane(
+    // Group by lane. Each lane carries a representative cleaned workflow name, section, and always-show
+    // flag, all already set on the runs by the producer.
+    private static IEnumerable<(string Repository, string Workflow, string Lane, string Section, bool AlwaysShow, List<WorkflowRun> Runs)> GroupByLane(
         IReadOnlyList<WorkflowRun> runs) =>
         runs
             .GroupBy(run => (run.Repository, run.Lane))
-            .Select(group => (group.Key.Repository, group.First().Workflow, group.Key.Lane, group.First().Section, group.ToList()));
+            .Select(group => (group.Key.Repository, group.First().Workflow, group.Key.Lane, group.First().Section, group.First().AlwaysShow, group.ToList()));
 }

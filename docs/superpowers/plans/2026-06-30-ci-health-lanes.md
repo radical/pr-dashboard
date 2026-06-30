@@ -21,20 +21,24 @@ and records a sequenced roadmap for the richer (non-GH-Actions) features.
 
 The tab is organized into **two per-repo CI sections** plus bot tracking:
 
-1. **Main CI section** — the repo's main workflow(s) on tracked push branches.
-   Per-repo `CiHealth:Lanes[repo]`: `MainWorkflows` (cleaned names, e.g.
-   `["CI"]` for aspire's ci.yml; empty ⇒ all workflows) + `Branches` (exact or
-   trailing-`*` glob, e.g. `["main", "release/*"]`). A push to `release/13.4` →
-   lane `CI · release/13.4`.
-2. **Scheduled section** — every `schedule`-triggered workflow, minus a per-repo
-   `SkipScheduled` list. PRs, feature-branch pushes, and dispatch runs are
-   dropped.
+1. **Main CI section** — the repo's configured `MainWorkflows` (cleaned names),
+   regardless of trigger: a main workflow's runs on tracked push `Branches`
+   (`["main", "release/*"]`) plus its scheduled runs (e.g. aspire =
+   `["CI", "Outerloop Tests"]`; dcp = `["Build and Test"]`). Empty ⇒ all
+   workflows on the tracked branches.
+2. **Scheduled section** — every other `schedule`-triggered workflow, minus a
+   per-repo `SkipScheduled` list. The UI shows `AlwaysShowScheduled` lanes
+   (aspire = Quarantined / Deployment E2E) plus any currently-failing lane, and
+   a "show all" toggle reveals the rest. PRs, feature-branch pushes, and dispatch
+   runs are dropped.
 3. Each lane is tagged with its **section**; the 36h pulse and the 7d weekly
    trend both render Main and Scheduled as separate blocks.
 4. **Green-at-tip** per lane + an "N lane(s) red at tip" headline; **Δ vs 7-day**
-   on the pulse; **clean lane names**.
-5. **Bot tracking** — a global bot-id list drives a bot-PR block (now showing
-   each PR's **CI / mergeable / review** state via the GraphQL fetch, per
+   on the pulse; **pass/total** alongside the rate; **clean lane names** (only an
+   actual `.yml`/`.yaml` path is stripped, so names containing '/' survive); the
+   **recent run blocks link to their runs**.
+5. **Bot tracking** — a global bot-id list drives a bot-PR block (showing each
+   PR's **CI / mergeable / review** state via the GraphQL fetch, per
    microsoft/aspire#18285) and a bot-**issues** block. Bot rows show the title.
 
 ## Out of scope (roadmap — tracked, not built here)
