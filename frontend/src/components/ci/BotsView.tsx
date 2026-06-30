@@ -1,23 +1,9 @@
-import { useEffect, useState } from 'react';
-import type { CiHealthResponse } from '../../types';
-import { fetchCiHealth } from '../../utils/ciHealth';
 import { buildRepoLabeler, relativeTime } from './ciFormat';
+import { useCiHealth } from './useCiHealth';
+import CiRefreshButton from './CiRefreshButton';
 
 function BotsView() {
-  const [data, setData] = useState<CiHealthResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    fetchCiHealth(controller.signal)
-      .then(setData)
-      .catch((err: unknown) => {
-        if (!controller.signal.aborted) {
-          setError(err instanceof Error ? err.message : 'Failed to load bot activity');
-        }
-      });
-    return () => controller.abort();
-  }, []);
+  const { data, error, refreshing, refreshError, refresh } = useCiHealth();
 
   if (error) {
     return <div className="ci-health-empty">Could not load bot activity: {error}</div>;
@@ -40,6 +26,7 @@ function BotsView() {
         <span className="ci-strip-meta">
           {pulse ? `pulse ${relativeTime(pulse.updatedAt)}` : 'pulse pending'}
         </span>
+        <CiRefreshButton refreshing={refreshing} refreshError={refreshError} onRefresh={refresh} />
       </section>
 
       <section className="ci-block">

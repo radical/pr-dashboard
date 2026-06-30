@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
-import type { CiHealthResponse, WorkflowPulse, WorkflowWeekly } from '../../types';
-import { fetchCiHealth } from '../../utils/ciHealth';
+import { useState } from 'react';
+import type { WorkflowPulse, WorkflowWeekly } from '../../types';
 import { buildRepoLabeler, delta, percent, relativeTime } from './ciFormat';
+import { useCiHealth } from './useCiHealth';
+import CiRefreshButton from './CiRefreshButton';
 
 // Newest-first sequence rendered oldest -> newest (left to right), each block linking to its run.
 function RecentRuns({ lane }: { lane: WorkflowPulse }) {
@@ -70,21 +71,8 @@ function WeeklyTable({ lanes, repoLabel }: { lanes: WorkflowWeekly[]; repoLabel:
 }
 
 function CiHealthView() {
-  const [data, setData] = useState<CiHealthResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { data, error, refreshing, refreshError, refresh } = useCiHealth();
   const [showAllScheduled, setShowAllScheduled] = useState(false);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    fetchCiHealth(controller.signal)
-      .then(setData)
-      .catch((err: unknown) => {
-        if (!controller.signal.aborted) {
-          setError(err instanceof Error ? err.message : 'Failed to load CI health');
-        }
-      });
-    return () => controller.abort();
-  }, []);
 
   if (error) {
     return <div className="ci-health-empty">Could not load CI health: {error}</div>;
@@ -125,6 +113,7 @@ function CiHealthView() {
           {pulse ? `pulse ${relativeTime(pulse.updatedAt)}` : 'pulse pending'} ·{' '}
           {weekly ? `weekly ${relativeTime(weekly.updatedAt)}` : 'weekly pending'}
         </span>
+        <CiRefreshButton refreshing={refreshing} refreshError={refreshError} onRefresh={refresh} />
       </section>
 
       <section className="ci-block">

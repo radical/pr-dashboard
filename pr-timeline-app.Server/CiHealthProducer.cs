@@ -15,6 +15,10 @@ sealed class CiHealthProducer(
     ILogger<CiHealthProducer> logger) : BackgroundService
 {
     private static readonly TimeSpan s_startupDelay = TimeSpan.FromSeconds(45);
+    // Serializes the background timer cycle and on-demand manual refreshes so they never run the same
+    // repo loop concurrently (overlapping cycles would double the GitHub request budget and race the
+    // snapshot write).
+    private readonly SemaphoreSlim _cycleLock = new(1, 1);
     private DateTimeOffset _lastWeekly = DateTimeOffset.MinValue;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -48,9 +52,14 @@ sealed class CiHealthProducer(
 
     private async Task SafeRunAsync(CancellationToken cancellationToken)
     {
+        await _cycleLock.WaitAsync(cancellationToken);
         try
         {
-            await RunPulseCycleAsync(cancellationToken);
+            // Token selection (user token when a request is signed in or the dev gh/GITHUB_TOKEN fallback
+            // resolves one, else the shared public-cache server token) is handled inside GitHubClient's
+            // scope resolution — the same path PR fetching uses. The cadence relies on the cache, so it
+            // does not force a refresh.
+            await RunPulseCycleAsync(forceRefresh: false, cancellationToken);
 
             var now = timeProvider.GetUtcNow();
             if (now - _lastWeekly >= TimeSpan.FromHours(options.Value.WeeklyRefreshHours))
@@ -66,10 +75,35 @@ sealed class CiHealthProducer(
         {
             logger.LogError(ex, "CI health producer cycle failed.");
         }
+        finally
+        {
+            _cycleLock.Release();
+        }
+    }
+
+    // On-demand pulse refresh triggered by a signed-in user (POST /api/ci-health/refresh). Forces a
+    // fresh fetch (bypassing the cache) using the caller's GitHub token — the same scope-selected token
+    // path PR fetching uses. Serialized against the timer cycle via the same lock, then returns the
+    // snapshot it wrote alongside the current (cadence-owned) weekly snapshot.
+    internal async Task<CiHealthResponse> RefreshNowAsync(CancellationToken cancellationToken)
+    {
+        await _cycleLock.WaitAsync(cancellationToken);
+        try
+        {
+            var pulse = await RunPulseCycleAsync(forceRefresh: true, cancellationToken);
+            var weekly = await store.ReadWeeklyAsync(cancellationToken);
+            return new CiHealthResponse(pulse, weekly);
+        }
+        finally
+        {
+            _cycleLock.Release();
+        }
     }
 
     // Exposed internal so tests can drive a single cycle with a real/fake GitHubClient + store.
-    internal async Task RunPulseCycleAsync(CancellationToken cancellationToken)
+    internal async Task<CiHealthPulseSnapshot> RunPulseCycleAsync(
+        bool forceRefresh,
+        CancellationToken cancellationToken)
     {
         var config = options.Value;
         var now = timeProvider.GetUtcNow();
@@ -88,20 +122,21 @@ sealed class CiHealthProducer(
 
             try
             {
-                var defaultBranch = await gitHub.GetDefaultBranchAsync(repository, cancellationToken);
-                var runs = ToLanes(repository, await gitHub.GetWorkflowRunsAsync(repository, now - window, cancellationToken), defaultBranch);
+                var defaultBranch = await gitHub.GetDefaultBranchAsync(repository, cancellationToken, forceRefresh);
+                var runs = ToLanes(repository, await gitHub.GetWorkflowRunsAsync(repository, now - window, cancellationToken, workflowId: null, forceRefresh), defaultBranch);
                 var (repoPulses, repoFailing) = CiHealthComputer.ComputePulse(runs, now, window, config.StreakThreshold);
                 pulses.AddRange(repoPulses);
                 failing.AddRange(repoFailing);
 
                 // GraphQL fetch so bot PRs carry merge-readiness state (mergeable / checks / review).
-                // forceRefresh: false — rely on the shared cache.
-                var openPrs = await gitHub.GetPullRequestsGraphQlAsync(repository, "open", false, cancellationToken);
+                // forceRefresh follows the cycle: the timer relies on the shared cache, a manual refresh
+                // forces fresh data.
+                var openPrs = await gitHub.GetPullRequestsGraphQlAsync(repository, "open", forceRefresh, cancellationToken);
                 botPrs.AddRange(BotPrClassifier.Classify(ToCandidates(repository, openPrs), config.BotLogins));
 
                 if (config.TrackBotIssues)
                 {
-                    var openIssues = await gitHub.GetOpenIssuesAsync(repository, cancellationToken);
+                    var openIssues = await gitHub.GetOpenIssuesAsync(repository, cancellationToken, forceRefresh);
                     botIssues.AddRange(BotPrClassifier.ClassifyIssues(openIssues, config.BotLogins));
                 }
             }
@@ -111,9 +146,11 @@ sealed class CiHealthProducer(
             }
         }
 
-        await store.WritePulseAsync(new CiHealthPulseSnapshot(pulses, failing, botPrs, botIssues, now), cancellationToken);
+        var snapshot = new CiHealthPulseSnapshot(pulses, failing, botPrs, botIssues, now);
+        await store.WritePulseAsync(snapshot, cancellationToken);
         logger.LogInformation("CI health pulse written: {Lanes} lanes, {Failing} failing, {BotPrs} bot PRs, {BotIssues} bot issues.",
             pulses.Count, failing.Count, botPrs.Count, botIssues.Count);
+        return snapshot;
     }
 
     internal async Task RunWeeklyCycleAsync(CancellationToken cancellationToken)

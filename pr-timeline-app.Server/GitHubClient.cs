@@ -424,6 +424,33 @@ sealed partial class GitHubClient(
         bool Refresh,
         bool CacheOnly);
 
+    // Fetches a per-repository resource through the same scope-selection + cache pipeline the dashboard's
+    // PR data uses: the scope decides the token (user token when signed in, shared public-cache token for
+    // anonymous viewers of public repos), responses are cached per scope (user entries stay in L1; public
+    // entries write through to the shared github-cache Blob), and transient GitHub failures fall back to
+    // last-good / the shared public snapshot. Used by the GitHub Actions endpoints so they behave exactly
+    // like PR fetching.
+    private async Task<T?> GetRepositoryResourceCachedAsync<T>(
+        RepositoryName repositoryName,
+        bool forceRefresh,
+        string resourceName,
+        string? keyPart,
+        Func<GitHubCacheScope, Task<T?>> factory,
+        CancellationToken cancellationToken)
+    {
+        var selection = await GetRepositoryCacheScopeSelectionAsync(repositoryName, forceRefresh, cancellationToken);
+        var cacheKey = CreateRepositoryCacheKey(selection.Scope, repositoryName, resourceName, keyPart);
+        var sharedFallbackKey = CreateSharedFallbackCacheKey(selection.SharedFallbackScope, repositoryName, resourceName, keyPart);
+        return await GetOrRefreshCacheAsync(
+            cacheKey,
+            CacheDurationForScope(selection.Scope),
+            selection.Refresh,
+            selection.CacheOnly,
+            () => factory(selection.Scope),
+            cancellationToken,
+            transientFallbackCacheKey: sharedFallbackKey);
+    }
+
     private static GitHubApiException CreatePublicCacheUnavailableException() =>
         new(
             HttpStatusCode.ServiceUnavailable,
@@ -523,66 +550,89 @@ sealed partial class GitHubClient(
     // rolling lane. One cheap GET /repos/{owner}/{repo} per cycle.
     public async Task<string> GetDefaultBranchAsync(
         RepositoryName repositoryName,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool forceRefresh = false)
     {
-        var url = $"repos/{repositoryName.Owner}/{repositoryName.Name}";
-        using var response = await SendGitHubRequestAsync(url, GitHubRequestAuthorization.PublicCacheToken, cancellationToken);
-        var payload = await ReadGitHubJsonAsync(
-            response,
-            GitHubJsonSerializerContext.Default.GitHubRepositoryDto,
+        var branch = await GetRepositoryResourceCachedAsync<string>(
+            repositoryName,
+            forceRefresh,
+            "default-branch",
+            keyPart: null,
+            async scope =>
+            {
+                var url = $"repos/{repositoryName.Owner}/{repositoryName.Name}";
+                using var response = await SendGitHubRequestAsync(url, scope.RequestAuthorization, cancellationToken);
+                var payload = await ReadGitHubJsonAsync(
+                    response,
+                    GitHubJsonSerializerContext.Default.GitHubRepositoryDto,
+                    cancellationToken);
+                return payload.DefaultBranch ?? "main";
+            },
             cancellationToken);
-        return payload.DefaultBranch ?? "main";
+        return branch ?? "main";
     }
 
     // Returns open issues for a repo (pull requests excluded), newest-updated first, as BotIssue
-    // carriers with the raw author login. The caller filters to tracked bots. Uses the public-cache
-    // (server) token so it works for logged-out viewers.
+    // carriers with the raw author login. The caller filters to tracked bots. Fetched through the same
+    // scope-selection + cache pipeline as PR data (see GetRepositoryResourceCachedAsync).
     public async Task<IReadOnlyList<BotIssue>> GetOpenIssuesAsync(
         RepositoryName repositoryName,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool forceRefresh = false)
     {
         const int maxPages = 3;
         const int perPage = 100;
-        var issues = new List<BotIssue>();
 
-        for (var page = 1; page <= maxPages; page++)
-        {
-            var url = $"repos/{repositoryName.Owner}/{repositoryName.Name}/issues?state=open&sort=updated&per_page={perPage}&page={page}";
-            using var response = await SendGitHubRequestAsync(url, GitHubRequestAuthorization.PublicCacheToken, cancellationToken);
-            var payload = await ReadGitHubJsonAsync(
-                response,
-                GitHubJsonSerializerContext.Default.GitHubIssueDtoArray,
-                cancellationToken);
-
-            if (payload.Length == 0)
+        var issues = await GetRepositoryResourceCachedAsync<IReadOnlyList<BotIssue>>(
+            repositoryName,
+            forceRefresh,
+            "open-issues",
+            keyPart: null,
+            async scope =>
             {
-                break;
-            }
-
-            foreach (var dto in payload)
-            {
-                // The /issues endpoint returns PRs too; PRs carry a `pull_request` object.
-                if (dto.PullRequest is not null)
+                var collected = new List<BotIssue>();
+                for (var page = 1; page <= maxPages; page++)
                 {
-                    continue;
+                    var url = $"repos/{repositoryName.Owner}/{repositoryName.Name}/issues?state=open&sort=updated&per_page={perPage}&page={page}";
+                    using var response = await SendGitHubRequestAsync(url, scope.RequestAuthorization, cancellationToken);
+                    var payload = await ReadGitHubJsonAsync(
+                        response,
+                        GitHubJsonSerializerContext.Default.GitHubIssueDtoArray,
+                        cancellationToken);
+
+                    if (payload.Length == 0)
+                    {
+                        break;
+                    }
+
+                    foreach (var dto in payload)
+                    {
+                        // The /issues endpoint returns PRs too; PRs carry a `pull_request` object.
+                        if (dto.PullRequest is not null)
+                        {
+                            continue;
+                        }
+
+                        collected.Add(new BotIssue(
+                            repositoryName.ToString(),
+                            dto.Number,
+                            dto.Title ?? "",
+                            dto.User?.Login ?? "",
+                            dto.HtmlUrl ?? "",
+                            dto.Labels.Select(label => label.Name ?? "").Where(name => name.Length > 0).ToList()));
+                    }
+
+                    if (payload.Length < perPage)
+                    {
+                        break;
+                    }
                 }
 
-                issues.Add(new BotIssue(
-                    repositoryName.ToString(),
-                    dto.Number,
-                    dto.Title ?? "",
-                    dto.User?.Login ?? "",
-                    dto.HtmlUrl ?? "",
-                    dto.Labels.Select(label => label.Name ?? "").Where(name => name.Length > 0).ToList()));
-            }
+                return collected;
+            },
+            cancellationToken);
 
-            if (payload.Length < perPage)
-            {
-                break;
-            }
-        }
-
-        return issues;
+        return issues ?? [];
     }
 
     // Lists a repo's workflow definitions (id + display name). Used by the weekly cycle to fetch runs
@@ -590,105 +640,131 @@ sealed partial class GitHubClient(
     // 14-day window on busy repos.
     public async Task<IReadOnlyList<WorkflowDefinition>> GetWorkflowDefinitionsAsync(
         RepositoryName repositoryName,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool forceRefresh = false)
     {
         const int maxPages = 5;
         const int perPage = 100;
-        var definitions = new List<WorkflowDefinition>();
 
-        for (var page = 1; page <= maxPages; page++)
-        {
-            var url = $"repos/{repositoryName.Owner}/{repositoryName.Name}/actions/workflows?per_page={perPage}&page={page}";
-            using var response = await SendGitHubRequestAsync(url, GitHubRequestAuthorization.PublicCacheToken, cancellationToken);
-            var payload = await ReadGitHubJsonAsync(
-                response,
-                GitHubJsonSerializerContext.Default.GitHubWorkflowDefinitionsResponseDto,
-                cancellationToken);
-
-            if (payload.Workflows.Length == 0)
+        var definitions = await GetRepositoryResourceCachedAsync<IReadOnlyList<WorkflowDefinition>>(
+            repositoryName,
+            forceRefresh,
+            "workflow-definitions",
+            keyPart: null,
+            async scope =>
             {
-                break;
-            }
-
-            foreach (var dto in payload.Workflows)
-            {
-                // Skip disabled workflows; only "active" ones produce meaningful health signal.
-                if (dto.State is null or "active")
+                var collected = new List<WorkflowDefinition>();
+                for (var page = 1; page <= maxPages; page++)
                 {
-                    definitions.Add(new WorkflowDefinition(dto.Id, dto.Name ?? "(unnamed)"));
+                    var url = $"repos/{repositoryName.Owner}/{repositoryName.Name}/actions/workflows?per_page={perPage}&page={page}";
+                    using var response = await SendGitHubRequestAsync(url, scope.RequestAuthorization, cancellationToken);
+                    var payload = await ReadGitHubJsonAsync(
+                        response,
+                        GitHubJsonSerializerContext.Default.GitHubWorkflowDefinitionsResponseDto,
+                        cancellationToken);
+
+                    if (payload.Workflows.Length == 0)
+                    {
+                        break;
+                    }
+
+                    foreach (var dto in payload.Workflows)
+                    {
+                        // Skip disabled workflows; only "active" ones produce meaningful health signal.
+                        if (dto.State is null or "active")
+                        {
+                            collected.Add(new WorkflowDefinition(dto.Id, dto.Name ?? "(unnamed)"));
+                        }
+                    }
+
+                    if (payload.Workflows.Length < perPage)
+                    {
+                        break;
+                    }
                 }
-            }
 
-            if (payload.Workflows.Length < perPage)
-            {
-                break;
-            }
-        }
+                return collected;
+            },
+            cancellationToken);
 
-        return definitions;
+        return definitions ?? [];
     }
 
     // Fetches recent GitHub Actions runs for a repo (or a single workflow when workflowId is set),
-    // newest-first, stopping once runs predate `since` or a page cap is hit. Uses the public-cache
-    // (server) token so it works for logged-out viewers. The server-side `created>=since` filter keeps
-    // the page budget spent on in-window runs only, so busy repos don't exhaust it on older runs.
+    // newest-first, stopping once runs predate `since` or a page cap is hit. Fetched through the same
+    // scope-selection + cache pipeline as PR data (see GetRepositoryResourceCachedAsync). The server-side
+    // `created>=since` filter keeps the page budget spent on in-window runs only, so busy repos don't
+    // exhaust it on older runs. Cached per workflow ("all" for the repo-wide call): the window size is
+    // fixed per caller, so keying by workflow id alone keeps the cache key stable across cycles.
     public async Task<IReadOnlyList<WorkflowRun>> GetWorkflowRunsAsync(
         RepositoryName repositoryName,
         DateTimeOffset since,
         CancellationToken cancellationToken,
-        long? workflowId = null)
+        long? workflowId = null,
+        bool forceRefresh = false)
     {
         const int maxPages = 10;
         const int perPage = 100;
-        var runs = new List<WorkflowRun>();
         // GitHub's `created` filter takes a date-range expression; ">=<iso>" bounds it to the window.
         var createdFilter = Uri.EscapeDataString($">={since.UtcDateTime:yyyy-MM-ddTHH:mm:ssZ}");
         var runsPath = workflowId is long id
             ? $"repos/{repositoryName.Owner}/{repositoryName.Name}/actions/workflows/{id}/runs"
             : $"repos/{repositoryName.Owner}/{repositoryName.Name}/actions/runs";
 
-        for (var page = 1; page <= maxPages; page++)
-        {
-            var url = $"{runsPath}?per_page={perPage}&page={page}&created={createdFilter}";
-            using var response = await SendGitHubRequestAsync(url, GitHubRequestAuthorization.PublicCacheToken, cancellationToken);
-            var payload = await ReadGitHubJsonAsync(
-                response,
-                GitHubJsonSerializerContext.Default.GitHubWorkflowRunsResponseDto,
-                cancellationToken);
-
-            if (payload.WorkflowRuns.Length == 0)
+        var runs = await GetRepositoryResourceCachedAsync<IReadOnlyList<WorkflowRun>>(
+            repositoryName,
+            forceRefresh,
+            "workflow-runs",
+            keyPart: workflowId?.ToString() ?? "all",
+            async scope =>
             {
-                break;
-            }
-
-            var reachedOlderThanSince = false;
-            foreach (var dto in payload.WorkflowRuns)
-            {
-                if (dto.CreatedAt < since)
+                var collected = new List<WorkflowRun>();
+                for (var page = 1; page <= maxPages; page++)
                 {
-                    reachedOlderThanSince = true;
-                    continue;
+                    var url = $"{runsPath}?per_page={perPage}&page={page}&created={createdFilter}";
+                    using var response = await SendGitHubRequestAsync(url, scope.RequestAuthorization, cancellationToken);
+                    var payload = await ReadGitHubJsonAsync(
+                        response,
+                        GitHubJsonSerializerContext.Default.GitHubWorkflowRunsResponseDto,
+                        cancellationToken);
+
+                    if (payload.WorkflowRuns.Length == 0)
+                    {
+                        break;
+                    }
+
+                    var reachedOlderThanSince = false;
+                    foreach (var dto in payload.WorkflowRuns)
+                    {
+                        if (dto.CreatedAt < since)
+                        {
+                            reachedOlderThanSince = true;
+                            continue;
+                        }
+
+                        collected.Add(new WorkflowRun(
+                            repositoryName.ToString(),
+                            dto.Name ?? "(unnamed)",
+                            dto.Status ?? "",
+                            dto.Conclusion ?? "",
+                            dto.CreatedAt,
+                            dto.Id,
+                            dto.HtmlUrl ?? "",
+                            dto.HeadBranch ?? "",
+                            dto.Event ?? ""));
+                    }
+
+                    if (reachedOlderThanSince || payload.WorkflowRuns.Length < perPage)
+                    {
+                        break;
+                    }
                 }
 
-                runs.Add(new WorkflowRun(
-                    repositoryName.ToString(),
-                    dto.Name ?? "(unnamed)",
-                    dto.Status ?? "",
-                    dto.Conclusion ?? "",
-                    dto.CreatedAt,
-                    dto.Id,
-                    dto.HtmlUrl ?? "",
-                    dto.HeadBranch ?? "",
-                    dto.Event ?? ""));
-            }
+                return collected;
+            },
+            cancellationToken);
 
-            if (reachedOlderThanSince || payload.WorkflowRuns.Length < perPage)
-            {
-                break;
-            }
-        }
-
-        return runs;
+        return runs ?? [];
     }
 
     public async Task<IReadOnlyList<PullRequestSummary>> GetPullRequestsGraphQlAsync(

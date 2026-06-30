@@ -4070,3 +4070,10 @@ img.avatar-dot {
   border: 1px solid var(--border, #30363d); border-radius: 5px; padding: 1px 7px; cursor: pointer;
   color: inherit; opacity: 0.8; }
 .ci-toggle:hover { opacity: 1; }
+.ci-refresh-wrap { display: inline-flex; align-items: center; gap: 0.5rem; }
+.ci-refresh-error { font-size: 0.75rem; color: #f85149; opacity: 0.9; }
+.ci-refresh { font-size: 0.75rem; font-weight: 500; background: transparent;
+  border: 1px solid var(--border, #30363d); border-radius: 5px; padding: 2px 9px; cursor: pointer;
+  color: inherit; opacity: 0.85; white-space: nowrap; }
+.ci-refresh:hover:not(:disabled) { opacity: 1; }
+.ci-refresh:disabled { opacity: 0.5; cursor: default; }
