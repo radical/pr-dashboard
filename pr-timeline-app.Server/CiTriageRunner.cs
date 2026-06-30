@@ -1,19 +1,17 @@
-using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 
 // Produces a CI failure triage by shelling out to the Copilot CLI ("for now", before the SDK). Builds a
-// prompt from the currently-failing lanes, runs `copilot -p ... --output-format json`, and reads the JSON
-// the model is instructed to write into a temp dir we grant it access to via --add-dir. The parsing is a
-// pure static method so it can be unit-tested against real captured CLI output without spawning a process.
+// prompt from the currently-failing lanes, runs the CLI via the shared CopilotCli helper, and parses the
+// JSON the model writes back. The parsing is a pure static method so it can be unit-tested against real
+// captured CLI output without spawning a process.
 sealed class CiTriageRunner(
+    CopilotCli copilot,
     CiHealthSnapshotStore store,
     IOptions<CiHealthOptions> options,
     ILogger<CiTriageRunner> logger)
 {
-    private const string OutputFileName = "triage-output.json";
-
     // Runs triage over the failing set, persists the snapshot, and returns it. A configurable cap bounds
     // how many lanes are investigated so the request/credit budget stays predictable.
     public async Task<CiTriageSnapshot> RunAsync(
@@ -21,8 +19,6 @@ sealed class CiTriageRunner(
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        var config = options.Value.Triage;
-
         if (failing.Count == 0)
         {
             var empty = new CiTriageSnapshot([], now, null);
@@ -30,30 +26,23 @@ sealed class CiTriageRunner(
             return empty;
         }
 
-        var subset = failing.Take(Math.Max(1, config.MaxLanes)).ToList();
-        var workDir = Directory.CreateTempSubdirectory("ci-triage");
+        var subset = failing.Take(Math.Max(1, options.Value.Triage.MaxLanes)).ToList();
         try
         {
-            var outputPath = Path.Combine(workDir.FullName, OutputFileName);
-            var prompt = BuildPrompt(subset, outputPath);
-
-            var (exitCode, stdout, stderr, timedOut) = await RunCopilotAsync(config, workDir.FullName, prompt, cancellationToken);
-
-            string? raw = File.Exists(outputPath) ? await File.ReadAllTextAsync(outputPath, cancellationToken) : null;
+            var result = await copilot.RunAsync(outputPath => BuildPrompt(subset, outputPath), cancellationToken);
 
             CiTriageSnapshot snapshot;
-            if (timedOut)
+            if (result.TimedOut)
             {
-                snapshot = new CiTriageSnapshot([], now, $"Triage timed out after {config.TimeoutSeconds}s.");
+                snapshot = new CiTriageSnapshot([], now, $"Triage timed out after {options.Value.Triage.TimeoutSeconds}s.");
             }
-            else if (raw is null)
+            else if (result.RawJson is null)
             {
-                logger.LogWarning("CI triage produced no output file (exit {ExitCode}). stderr: {Stderr}", exitCode, Truncate(stderr));
-                snapshot = new CiTriageSnapshot([], now, $"Triage produced no result (exit {exitCode}).");
+                snapshot = new CiTriageSnapshot([], now, $"Triage produced no result (exit {result.ExitCode}).");
             }
             else
             {
-                snapshot = ParseTriageOutput(raw, now);
+                snapshot = ParseTriageOutput(result.RawJson, now);
             }
 
             await store.WriteTriageAsync(snapshot, cancellationToken);
@@ -68,18 +57,13 @@ sealed class CiTriageRunner(
             await store.WriteTriageAsync(failed, cancellationToken);
             return failed;
         }
-        finally
-        {
-            try { workDir.Delete(recursive: true); } catch { /* best-effort cleanup */ }
-        }
     }
 
     // Parses the model's JSON object (optionally wrapped in a ```json fence) into a snapshot. Pure +
-    // static so tests can drive it with real captured CLI output. Tolerant of surrounding prose by
-    // extracting the outermost { ... } before deserializing.
+    // static so tests can drive it with real captured CLI output.
     internal static CiTriageSnapshot ParseTriageOutput(string raw, DateTimeOffset now)
     {
-        var json = ExtractJsonObject(raw);
+        var json = CopilotCli.ExtractJsonObject(raw);
         if (json is null)
         {
             return new CiTriageSnapshot([], now, "Triage output was not valid JSON.");
@@ -93,65 +77,6 @@ sealed class CiTriageRunner(
         catch (JsonException)
         {
             return new CiTriageSnapshot([], now, "Triage output was not valid JSON.");
-        }
-    }
-
-    private static string? ExtractJsonObject(string raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw))
-        {
-            return null;
-        }
-
-        var start = raw.IndexOf('{');
-        var end = raw.LastIndexOf('}');
-        return start >= 0 && end > start ? raw[start..(end + 1)] : null;
-    }
-
-    private async Task<(int ExitCode, string Stdout, string Stderr, bool TimedOut)> RunCopilotAsync(
-        CiTriageOptions config,
-        string workDir,
-        string prompt,
-        CancellationToken cancellationToken)
-    {
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = config.Command,
-            WorkingDirectory = workDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        // ArgumentList avoids shell quoting/injection entirely — the prompt is passed verbatim.
-        startInfo.ArgumentList.Add("--allow-all-tools");
-        startInfo.ArgumentList.Add("--add-dir");
-        startInfo.ArgumentList.Add(workDir);
-        startInfo.ArgumentList.Add("--output-format");
-        startInfo.ArgumentList.Add("json");
-        startInfo.ArgumentList.Add("-p");
-        startInfo.ArgumentList.Add(prompt);
-
-        using var process = new Process { StartInfo = startInfo };
-        var stdout = new StringBuilder();
-        var stderr = new StringBuilder();
-        process.OutputDataReceived += (_, e) => { if (e.Data is not null) stdout.AppendLine(e.Data); };
-        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) stderr.AppendLine(e.Data); };
-
-        process.Start();
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(TimeSpan.FromSeconds(config.TimeoutSeconds));
-        try
-        {
-            await process.WaitForExitAsync(timeoutCts.Token);
-            return (process.ExitCode, stdout.ToString(), stderr.ToString(), false);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            try { process.Kill(entireProcessTree: true); } catch { /* already gone */ }
-            return (-1, stdout.ToString(), stderr.ToString(), true);
         }
     }
 
@@ -203,7 +128,4 @@ Failing workflows to triage:
 {{lanes}}
 """;
     }
-
-    private static string Truncate(string value) =>
-        value.Length <= 500 ? value : value[..500] + "…";
 }

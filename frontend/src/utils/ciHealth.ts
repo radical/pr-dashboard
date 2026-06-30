@@ -27,3 +27,16 @@ export async function runCiTriage(signal?: AbortSignal): Promise<CiHealthRespons
   }
   return readJson<CiHealthResponse>(response);
 }
+
+// Triggers an on-demand Copilot shepherd of the open bot PRs/issues (auth-gated). Cached by input
+// fingerprint server-side, so a re-run with no relevant change returns quickly from cache.
+export async function runBotShepherd(signal?: AbortSignal): Promise<CiHealthResponse> {
+  const response = await fetch('/api/ci-health/shepherd', { method: 'POST', signal });
+  if (response.status === 401) {
+    throw new Error('Sign in with GitHub to run the shepherd.');
+  }
+  if (response.status === 503) {
+    throw new Error('Copilot shepherd is disabled on this server.');
+  }
+  return readJson<CiHealthResponse>(response);
+}

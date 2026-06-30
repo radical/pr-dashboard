@@ -63,7 +63,9 @@ static class BotPrClassifier
                 pr.CiStatus,
                 pr.Mergeable,
                 pr.Review,
-                pr.Labels));
+                pr.Labels,
+                pr.CreatedAt,
+                pr.UpdatedAt));
         }
 
         return result;

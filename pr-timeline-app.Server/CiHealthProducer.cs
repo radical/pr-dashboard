@@ -93,7 +93,8 @@ sealed class CiHealthProducer(
             var pulse = await RunPulseCycleAsync(forceRefresh: true, cancellationToken);
             var weekly = await store.ReadWeeklyAsync(cancellationToken);
             var triage = await store.ReadTriageAsync(cancellationToken);
-            return new CiHealthResponse(pulse, weekly, triage);
+            var shepherd = await store.ReadBotShepherdAsync(cancellationToken);
+            return new CiHealthResponse(pulse, weekly, triage, shepherd);
         }
         finally
         {
@@ -255,7 +256,9 @@ sealed class CiHealthProducer(
                 MapCiStatus(pr.Checks),
                 MapMergeable(pr.MergeableState),
                 MapReview(pr.Review),
-                pr.Labels))
+                pr.Labels,
+                pr.CreatedAt,
+                pr.UpdatedAt))
             .ToList();
 
     private static string MapCiStatus(ChecksStatus checks) =>

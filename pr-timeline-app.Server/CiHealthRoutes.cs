@@ -12,7 +12,8 @@ public static class CiHealthRoutes
             var pulse = await store.ReadPulseAsync(cancellationToken);
             var weekly = await store.ReadWeeklyAsync(cancellationToken);
             var triage = await store.ReadTriageAsync(cancellationToken);
-            return Results.Ok(new CiHealthResponse(pulse, weekly, triage));
+            var shepherd = await store.ReadBotShepherdAsync(cancellationToken);
+            return Results.Ok(new CiHealthResponse(pulse, weekly, triage, shepherd));
         });
 
         // Auth-gated: a signed-in user triggers an on-demand pulse refresh using their own GitHub token
@@ -57,7 +58,38 @@ public static class CiHealthRoutes
             var pulse = await store.ReadPulseAsync(cancellationToken);
             var weekly = await store.ReadWeeklyAsync(cancellationToken);
             var triage = await runner.RunAsync(pulse?.FailingNow ?? [], timeProvider.GetUtcNow(), cancellationToken);
-            return Results.Ok(new CiHealthResponse(pulse, weekly, triage));
+            var shepherd = await store.ReadBotShepherdAsync(cancellationToken);
+            return Results.Ok(new CiHealthResponse(pulse, weekly, triage, shepherd));
+        });
+
+        // Auth-gated: a signed-in user triggers an on-demand LLM shepherd of the open bot PRs/issues.
+        // Shells out to the Copilot CLI (BotShepherdRunner) but caches by input fingerprint, so a re-run
+        // with no relevant change returns the cached snapshot without invoking the CLI. Same gating as
+        // triage: 401 without a GitHub token, 503 when triage is disabled.
+        endpoints.MapPost("/api/ci-health/shepherd", async (
+            CiHealthSnapshotStore store,
+            BotShepherdRunner shepherdRunner,
+            GitHubTokenProvider tokenProvider,
+            IOptions<CiHealthOptions> options,
+            TimeProvider timeProvider,
+            CancellationToken cancellationToken) =>
+        {
+            if (!options.Value.Triage.Enabled)
+            {
+                return Results.Problem("CI triage is disabled (set CiHealth:Triage:Enabled).", statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+
+            if (await tokenProvider.GetTokenAsync(cancellationToken) is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var pulse = await store.ReadPulseAsync(cancellationToken);
+            var weekly = await store.ReadWeeklyAsync(cancellationToken);
+            var triage = await store.ReadTriageAsync(cancellationToken);
+            var shepherd = await shepherdRunner.RunAsync(
+                pulse?.BotPrs ?? [], pulse?.BotIssues ?? [], timeProvider.GetUtcNow(), cancellationToken);
+            return Results.Ok(new CiHealthResponse(pulse, weekly, triage, shepherd));
         });
 
         return endpoints;

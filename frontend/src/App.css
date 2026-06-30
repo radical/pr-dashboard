@@ -4077,3 +4077,30 @@ img.avatar-dot {
   color: inherit; opacity: 0.85; white-space: nowrap; }
 .ci-refresh:hover:not(:disabled) { opacity: 1; }
 .ci-refresh:disabled { opacity: 0.5; cursor: default; }
+
+/* Bots page: "needs attention" board for automation, reusing the tone system + ci-table density. */
+.bots-section { display: flex; flex-direction: column; gap: 0.5rem; }
+.bots-section h3 { margin: 0.25rem 0 0; font-size: 0.95rem; }
+.bots-cards { display: flex; flex-direction: column; gap: 0.75rem; }
+.bots-card { border-radius: 8px; }
+.bots-card .ci-table { margin-top: 0.4rem; }
+.bots-card-summary { margin: 0.15rem 0 0; font-size: 0.82rem; }
+.bots-card-action { margin: 0.15rem 0 0; }
+
+.bots-queue .bots-queue-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.bots-queue-item { display: flex; align-items: baseline; gap: 0.5rem; font-size: 0.85rem; flex-wrap: wrap; }
+.bots-actor { flex: none; }
+.bots-queue-link { font-weight: 500; }
+.bots-queue-action { opacity: 0.85; }
+.bots-age { margin-left: auto; white-space: nowrap; }
+.bots-repo { white-space: nowrap; }
+
+.bots-reason { display: inline-block; font-size: 0.78rem; padding: 1px 7px; border-radius: 999px;
+  border: 1px solid var(--attention-color, var(--border)); color: var(--text); }
+.bots-reason.success { --attention-color: var(--success-border); background: var(--success-wash); }
+.bots-reason.warning { --attention-color: var(--warning-border); background: var(--warning-wash); }
+.bots-reason.danger { --attention-color: var(--danger-border); background: var(--danger-wash); }
+.bots-reason.accent { --attention-color: var(--accent-strong); background: var(--accent-wash); }
+
+.bots-issue-list { list-style: none; margin: 0.4rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+.bots-issue-list li { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; font-size: 0.85rem; }

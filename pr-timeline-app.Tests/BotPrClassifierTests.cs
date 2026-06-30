@@ -19,7 +19,9 @@ public sealed class BotPrClassifierTests
             CiStatus: "passing",
             Mergeable: "mergeable",
             Review: "review_required",
-            Labels: labels ?? []);
+            Labels: labels ?? [],
+            CreatedAt: DateTimeOffset.UnixEpoch,
+            UpdatedAt: DateTimeOffset.UnixEpoch);
 
     [Fact]
     public void IncludesAllowlistedAuthors_StrippingAppPrefix()
@@ -124,7 +126,9 @@ public sealed class BotPrClassifierTests
             Title: $"issue {number}",
             Author: login,
             HtmlUrl: $"https://github.com/microsoft/aspire/issues/{number}",
-            Labels: labels ?? []);
+            Labels: labels ?? [],
+            CreatedAt: DateTimeOffset.UnixEpoch,
+            UpdatedAt: DateTimeOffset.UnixEpoch);
 
     [Fact]
     public void ClassifyIssues_KeepsTrackedBotsAndStripsBotSuffix()

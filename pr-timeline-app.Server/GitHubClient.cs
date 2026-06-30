@@ -619,7 +619,9 @@ sealed partial class GitHubClient(
                             dto.Title ?? "",
                             dto.User?.Login ?? "",
                             dto.HtmlUrl ?? "",
-                            dto.Labels.Select(label => label.Name ?? "").Where(name => name.Length > 0).ToList()));
+                            dto.Labels.Select(label => label.Name ?? "").Where(name => name.Length > 0).ToList(),
+                            dto.CreatedAt,
+                            dto.UpdatedAt));
                     }
 
                     if (payload.Length < perPage)

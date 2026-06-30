@@ -407,6 +407,8 @@ export type BotPullRequest = {
   mergeable: string;
   review: string;
   labels: string[];
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type BotIssue = {
@@ -416,6 +418,8 @@ export type BotIssue = {
   author: string;
   htmlUrl: string;
   labels: string[];
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type CiHealthPulseSnapshot = {
@@ -449,8 +453,52 @@ export type CiTriageSnapshot = {
   error: string | null;
 };
 
+export type BotWorkQueueItem = {
+  repository: string;
+  kind: string;
+  number: number;
+  htmlUrl: string;
+  title: string;
+  humanOnly: boolean;
+  action: string;
+};
+
+export type BotPrNote = {
+  repository: string;
+  number: number;
+  bucket: string;
+  why: string;
+  action: string;
+};
+
+export type BotIssueRef = {
+  repository: string;
+  number: number;
+  htmlUrl: string;
+  title: string;
+};
+
+export type BotIssueGroup = {
+  theme: string;
+  severity: string;
+  summary: string;
+  recommendation: string;
+  issues: BotIssueRef[];
+};
+
+export type BotShepherdSnapshot = {
+  workQueue: BotWorkQueueItem[];
+  prNotes: BotPrNote[];
+  issueGroups: BotIssueGroup[];
+  fingerprint: string;
+  updatedAt: string;
+  error: string | null;
+  fromCache: boolean;
+};
+
 export type CiHealthResponse = {
   pulse: CiHealthPulseSnapshot | null;
   weekly: CiHealthWeeklySnapshot | null;
   triage: CiTriageSnapshot | null;
+  botShepherd: BotShepherdSnapshot | null;
 };

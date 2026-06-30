@@ -79,7 +79,9 @@ record BotPullRequest(
     string CiStatus,
     string Mergeable,
     string Review,
-    IReadOnlyList<string> Labels);
+    IReadOnlyList<string> Labels,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
 
 // An open issue opened by a tracked bot/automation account.
 record BotIssue(
@@ -88,7 +90,9 @@ record BotIssue(
     string Title,
     string Author,
     string HtmlUrl,
-    IReadOnlyList<string> Labels);
+    IReadOnlyList<string> Labels,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
 
 // Candidate PR fed to the classifier (decoupled from PullRequestSummary so the classifier is pure).
 record CandidatePullRequest(
@@ -101,7 +105,9 @@ record CandidatePullRequest(
     string CiStatus,
     string Mergeable,
     string Review,
-    IReadOnlyList<string> Labels);
+    IReadOnlyList<string> Labels,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt);
 
 record CiHealthPulseSnapshot(
     IReadOnlyList<WorkflowPulse> Workflows,
@@ -115,11 +121,12 @@ record CiHealthWeeklySnapshot(
     DateTimeOffset UpdatedAt);
 
 // API response; any snapshot may be null before its first cycle has run. Triage is the LLM pass over
-// the failing lanes (null until a triage has been requested at least once).
+// the failing lanes; BotShepherd is the LLM pass over the bot PRs/issues (both null until requested).
 record CiHealthResponse(
     CiHealthPulseSnapshot? Pulse,
     CiHealthWeeklySnapshot? Weekly,
-    CiTriageSnapshot? Triage);
+    CiTriageSnapshot? Triage,
+    BotShepherdSnapshot? BotShepherd);
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(CiHealthPulseSnapshot))]
@@ -127,4 +134,6 @@ record CiHealthResponse(
 [JsonSerializable(typeof(CiHealthResponse))]
 [JsonSerializable(typeof(CiTriageSnapshot))]
 [JsonSerializable(typeof(CiTriagePayload))]
+[JsonSerializable(typeof(BotShepherdSnapshot))]
+[JsonSerializable(typeof(BotShepherdPayload))]
 partial class CiHealthJsonContext : JsonSerializerContext;

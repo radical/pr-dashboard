@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { CiHealthResponse } from '../../types';
-import { fetchCiHealth, refreshCiHealth, runCiTriage } from '../../utils/ciHealth';
+import { fetchCiHealth, refreshCiHealth, runBotShepherd, runCiTriage } from '../../utils/ciHealth';
 
-// Shared state for the CI health and Bots pages: initial load of the cached snapshot plus an on-demand
-// "refresh now" that re-runs the server pulse and swaps in the fresh snapshot.
+// Shared state for the CI health and Bots pages: initial load of the cached snapshot plus on-demand
+// "refresh now" (re-runs the server pulse), Copilot triage, and Copilot bot shepherd.
 export function useCiHealth() {
   const [data, setData] = useState<CiHealthResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -11,6 +11,8 @@ export function useCiHealth() {
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [triaging, setTriaging] = useState(false);
   const [triageError, setTriageError] = useState<string | null>(null);
+  const [shepherding, setShepherding] = useState(false);
+  const [shepherdError, setShepherdError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -48,5 +50,29 @@ export function useCiHealth() {
     }
   }, []);
 
-  return { data, error, refreshing, refreshError, refresh, triaging, triageError, triage };
+  const shepherd = useCallback(async () => {
+    setShepherding(true);
+    setShepherdError(null);
+    try {
+      setData(await runBotShepherd());
+    } catch (err: unknown) {
+      setShepherdError(err instanceof Error ? err.message : 'Shepherd failed');
+    } finally {
+      setShepherding(false);
+    }
+  }, []);
+
+  return {
+    data,
+    error,
+    refreshing,
+    refreshError,
+    refresh,
+    triaging,
+    triageError,
+    triage,
+    shepherding,
+    shepherdError,
+    shepherd,
+  };
 }
