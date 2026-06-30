@@ -521,18 +521,22 @@ sealed partial class GitHubClient(
 
     // Fetches recent GitHub Actions runs for a repo, newest-first, stopping once runs predate `since`
     // or a page cap is hit. Uses the public-cache (server) token so it works for logged-out viewers.
+    // The server-side `created>=since` filter keeps the page budget spent on in-window runs only, so
+    // busy repos don't exhaust it on older runs before the window is covered.
     public async Task<IReadOnlyList<WorkflowRun>> GetWorkflowRunsAsync(
         RepositoryName repositoryName,
         DateTimeOffset since,
         CancellationToken cancellationToken)
     {
-        const int maxPages = 5;
+        const int maxPages = 10;
         const int perPage = 100;
         var runs = new List<WorkflowRun>();
+        // GitHub's `created` filter takes a date-range expression; ">=<iso>" bounds it to the window.
+        var createdFilter = Uri.EscapeDataString($">={since.UtcDateTime:yyyy-MM-ddTHH:mm:ssZ}");
 
         for (var page = 1; page <= maxPages; page++)
         {
-            var url = $"repos/{repositoryName.Owner}/{repositoryName.Name}/actions/runs?per_page={perPage}&page={page}";
+            var url = $"repos/{repositoryName.Owner}/{repositoryName.Name}/actions/runs?per_page={perPage}&page={page}&created={createdFilter}";
             using var response = await SendGitHubRequestAsync(url, GitHubRequestAuthorization.PublicCacheToken, cancellationToken);
             var payload = await ReadGitHubJsonAsync(
                 response,

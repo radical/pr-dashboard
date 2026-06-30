@@ -32,6 +32,24 @@ public sealed class BotPrClassifierTests
     }
 
     [Fact]
+    public void IncludesAllowlistedAuthors_StrippingBotSuffix()
+    {
+        // REST /pulls returns App bots with a trailing "[bot]" suffix; these are the bots the block
+        // exists to surface, so a bare-name allowlist must still match them.
+        var prs = new[]
+        {
+            Pr(1, "dependabot[bot]"),
+            Pr(2, "github-actions[bot]"),
+            Pr(3, "octocat"),
+        };
+
+        var result = BotPrClassifier.Classify(prs, Allowlist);
+
+        Assert.Equal(2, result.Count);
+        Assert.Equal(new[] { "dependabot", "github-actions" }, result.Select(b => b.Author).ToArray());
+    }
+
+    [Fact]
     public void IncludesIsBotAuthorsNotInAllowlist()
     {
         var prs = new[] { Pr(1, "some-random-bot", isBot: true) };
@@ -48,7 +66,17 @@ public sealed class BotPrClassifierTests
         {
             Pr(1, "app/copilot-swe-agent", isBot: true),
             Pr(2, "app/copilot-pull-request-reviewer", isBot: true),
+            Pr(3, "copilot-swe-agent[bot]", isBot: true), // real REST shape
         };
+
+        Assert.Empty(BotPrClassifier.Classify(prs, Allowlist));
+    }
+
+    [Fact]
+    public void AlwaysDropsCopilotApps_EvenWhenAutomationBroken()
+    {
+        // "Always drop Copilot" is absolute and takes precedence over the automation-broken union.
+        var prs = new[] { Pr(1, "copilot-swe-agent[bot]", labels: ["automation-broken"]) };
 
         Assert.Empty(BotPrClassifier.Classify(prs, Allowlist));
     }
